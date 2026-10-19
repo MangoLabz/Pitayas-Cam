@@ -1,6 +1,6 @@
 {
   "name": "pitayacam",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.1-beta",
   "description": "Pitaya Cam - Continuous Smartphone & Web Virtual Camera Hub",
   "main": "main.js",
   "scripts": {
