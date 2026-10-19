@@ -1,0 +1,61 @@
+{
+  "name": "pitayacam",
+  "version": "0.1.0-beta",
+  "description": "Pitaya Cam - Continuous Smartphone & Web Virtual Camera Hub",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "installer": "electron installer-main.js",
+    "build-installer": "electron-builder -c.linux.target=AppImage",
+    "dist": "electron-builder --linux AppImage rpm"
+  },
+  "dependencies": {
+    "selfsigned": "^2.4.1",
+    "sudo-prompt": "^9.2.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.pitayas.cam",
+    "productName": "Pitaya Cam",
+    "copyright": "Copyright © 2026 Pitayas",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!images/**",
+      "!installer*",
+      "!setup-core.sh"
+    ],
+    "linux": {
+      "target": [
+        "AppImage",
+        "rpm"
+      ],
+      "executableName": "pitaya-cam",
+      "icon": "build/icons",
+      "category": "Video",
+      "synopsis": "Telefon jako kamera internetowa",
+      "maintainer": "Pitayas <inbox@rakunek.com>",
+      "vendor": "Pitayas"
+    },
+    "appImage": {
+      "artifactName": "PitayaCam-${version}-${arch}.${ext}"
+    },
+    "rpm": {
+      "packageName": "pitaya-cam",
+      "artifactName": "pitaya-cam-${version}.${arch}.${ext}"
+    }
+  },
+  "author": {
+    "name": "Pitayas",
+    "email": "inbox@rakunek.com"
+  },
+  "homepage": "https://github.com/MangoLabz/Pitayas-Cam"
+}

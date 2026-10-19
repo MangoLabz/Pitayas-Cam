@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Instalator Pitaya Cam</title>
+  <style>
+    :root {
+      --bg: #0c0c0e;
+      --pitaya-grad: linear-gradient(135deg, #ff4fa6 0%, #a3005a 100%);
+      --card: rgba(24, 24, 28, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
+    body { background: var(--bg); color: #fff; padding: 24px; user-select: none; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+    .card { background: var(--card); border: 1px solid var(--border); border-radius: 18px; padding: 24px; width: 100%; max-width: 380px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+    img.logo { width: 56px; height: 56px; margin-bottom: 12px; }
+    h2 { font-size: 20px; font-weight: 800; background: var(--pitaya-grad); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; }
+    p { color: #8b8b94; font-size: 13px; line-height: 1.4; margin-bottom: 20px; }
+    .progress-bar { width: 100%; height: 8px; background: rgba(255,255,255,0.06); border-radius: 6px; overflow: hidden; margin-bottom: 14px; display: none; }
+    .progress-fill { height: 100%; width: 0%; background: var(--pitaya-grad); transition: width 0.3s ease; }
+    .status { font-size: 12px; color: #a1a1aa; font-weight: 600; margin-bottom: 16px; min-height: 16px; }
+    button { width: 100%; padding: 12px; border-radius: 10px; border: none; font-size: 14px; font-weight: 700; cursor: pointer; color: white; background: var(--pitaya-grad); transition: opacity 0.2s; }
+    button:hover { opacity: 0.9; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="assets/icon.svg" class="logo" alt="Logo">
+    <h2>Pitaya Cam Setup</h2>
+    <p>Graficzny instalator wirtualnej kamery, sterowników ADB oraz modułów jądra.</p>
+
+    <div id="progBar" class="progress-bar">
+      <div id="progFill" class="progress-fill"></div>
+    </div>
+    <div id="statusText" class="status"></div>
+
+    <button id="installBtn">Rozpocznij instalację</button>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+    const btn = document.getElementById('installBtn');
+    const status = document.getElementById('statusText');
+    const bar = document.getElementById('progBar');
+    const fill = document.getElementById('progFill');
+
+    btn.onclick = async () => {
+      btn.disabled = true;
+      bar.style.display = 'block';
+      fill.style.width = '20%';
+      status.textContent = 'Oczekiwanie na autoryzację administratora...';
+
+      ipcRenderer.send('start-install');
+    };
+
+    ipcRenderer.on('install-progress', (e, msg, pct) => {
+      status.textContent = msg;
+      fill.style.width = pct + '%';
+    });
+
+    ipcRenderer.on('install-done', (e, success, err) => {
+      if (success) {
+        fill.style.width = '100%';
+        status.textContent = 'Instalacja zakończona pomyślnie!';
+        btn.textContent = 'Uruchom Pitaya Cam';
+        btn.disabled = false;
+        btn.onclick = () => ipcRenderer.send('launch-app');
+      } else {
+        status.textContent = 'Błąd: ' + (err || 'Odrzucono autoryzację');
+        btn.disabled = false;
+        btn.textContent = 'Spróbuj ponownie';
+      }
+    });
+  </script>
+</body>
+</html>

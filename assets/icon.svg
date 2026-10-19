@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="skinGrad" x1="20%" y1="10%" x2="80%" y2="90%">
+      <stop offset="0%" stop-color="#FF8FCB"/>
+      <stop offset="38%" stop-color="#F42D8F"/>
+      <stop offset="100%" stop-color="#A3005A"/>
+    </linearGradient>
+    <linearGradient id="bractGrad" x1="0" y1="1" x2="0.25" y2="0">
+      <stop offset="0%" stop-color="#FF4FA6"/>
+      <stop offset="42%" stop-color="#FF6DB4"/>
+      <stop offset="68%" stop-color="#C6DE4E"/>
+      <stop offset="100%" stop-color="#3E9F2A"/>
+    </linearGradient>
+    <linearGradient id="leafGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#7EE04A"/>
+      <stop offset="100%" stop-color="#1E7A16"/>
+    </linearGradient>
+    <radialGradient id="fleshWhite" cx="45%" cy="40%" r="65%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="75%" stop-color="#FBF3F7"/>
+      <stop offset="100%" stop-color="#F3D3E4"/>
+    </radialGradient>
+    <radialGradient id="fleshRed" cx="45%" cy="40%" r="65%">
+      <stop offset="0%" stop-color="#FF4DA0"/>
+      <stop offset="70%" stop-color="#D80F72"/>
+      <stop offset="100%" stop-color="#9A0052"/>
+    </radialGradient>
+    <linearGradient id="badgeGlyph" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="50%" stop-color="#F3D9E7"/>
+      <stop offset="100%" stop-color="#C99AB3"/>
+    </linearGradient>
+    <linearGradient id="wrenchGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="50%" stop-color="#DDDDDD"/>
+      <stop offset="100%" stop-color="#9E9E9E"/>
+    </linearGradient>
+    <linearGradient id="arrowGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FF9BD0"/>
+      <stop offset="100%" stop-color="#F42D8F"/>
+    </linearGradient>
+    <linearGradient id="irisGrad" x1="15%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#34609A"/>
+      <stop offset="55%" stop-color="#1C3555"/>
+      <stop offset="100%" stop-color="#08111D"/>
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000000" flood-opacity="0.38"/>
+    </filter>
+  </defs>
+  <g filter="url(#shadow)">
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(256 120) rotate(0) scale(1.15 1.15)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(228 128) rotate(-30) scale(-0.95 0.95)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(284 128) rotate(30) scale(0.95 0.95)"/>
+    <path d="M256 112 C356 112 412 196 412 296 C412 404 340 470 256 470 C172 470 100 404 100 296 C100 196 156 112 256 112 Z" fill="url(#skinGrad)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(128 222) rotate(-40) scale(-0.92 0.92)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(106 312) rotate(-62) scale(-0.86 0.86)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(130 402) rotate(-84) scale(-0.78 0.78)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(384 222) rotate(40) scale(0.92 0.92)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(406 312) rotate(62) scale(0.86 0.86)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(382 402) rotate(84) scale(0.78 0.78)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(256 206) rotate(0) scale(0.66 0.66)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(176 228) rotate(-12) scale(-0.68 0.68)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(336 228) rotate(12) scale(0.68 0.68)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(180 372) rotate(-16) scale(-0.62 0.62)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(332 372) rotate(16) scale(0.62 0.62)"/>
+    <path d="M-18 8 C-21 -20 -8 -50 10 -74 C5 -48 16 -20 18 6 C6 14 -6 14 -18 8 Z" fill="url(#bractGrad)" stroke="#9E1E5E" stroke-opacity=".18" stroke-width="1.5" transform="translate(256 420) rotate(0) scale(0.56 0.56)"/>
+    <path d="M150 200 C132 250 128 305 140 360 C130 335 126 280 138 220 C142 200 148 188 150 200 Z" fill="#FFFFFF" opacity="0.45"/>
+    <circle cx="256" cy="296" r="76" fill="#1C1C1C" stroke="#2E2E2E" stroke-width="4"/>
+    <circle cx="256" cy="296" r="61" fill="#0C0C0C"/>
+    <circle cx="256" cy="296" r="57" fill="none" stroke="#5A5A5A" stroke-width="1.6"/>
+    <circle cx="256" cy="296" r="46" fill="url(#irisGrad)"/>
+    <circle cx="256" cy="296" r="21" fill="#000000"/>
+    <circle cx="230" cy="270" r="13" fill="#FFFFFF" opacity="0.62"/>
+    <circle cx="242" cy="258" r="5" fill="#FFFFFF" opacity="0.85"/>
+    <ellipse cx="280" cy="319" rx="10.5" ry="5.2" transform="rotate(-28 280 319)" fill="#FFFFFF" opacity="0.22"/>
+  </g>
+</svg>

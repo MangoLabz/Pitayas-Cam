@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Pitaya Cam</title>
+  <link rel="stylesheet" href="pitaya-theme.css">
+  <style>
+    /* ───── Podgląd kamery ───── */
+    .preview-wrapper {
+      position: relative; width: 100%; aspect-ratio: 16 / 9;
+      background: radial-gradient(circle at center, #1c1b22 0%, #0b0a0e 100%);
+      border-radius: 22px; overflow: hidden; border: 1px solid var(--m-line);
+      box-shadow: 0 10px 25px rgba(0,0,0,0.35); display: flex; align-items: center; justify-content: center;
+    }
+    .preview-wrapper.hidden { display: none !important; }
+
+    #webcamPreview, #previewImg { width: 100%; height: 100%; object-fit: contain; background: transparent; z-index: 1; }
+
+    .widget-container { position: absolute; bottom: 12px; z-index: 10; pointer-events: none; display: none; }
+    .widget-container.left { left: 12px; right: auto; display: block; transform-origin: bottom left; }
+    .widget-container.right { right: 12px; left: auto; display: block; transform-origin: bottom right; }
+    .widget-container iframe { border: none; background: transparent; overflow: hidden; }
+    .widget-container.style-boxy iframe { width: 340px; height: 75px; }
+    .widget-container.style-compact iframe { width: 290px; height: 75px; }
+    .widget-container.style-gallery iframe { width: 175px; height: 260px; }
+    .widget-container.style-minimal iframe { width: 310px; height: 42px; }
+    .widget-container.style-macos iframe { width: 310px; height: 85px; }
+    .widget-container.style-shell iframe { width: 320px; height: 95px; }
+    .widget-container.style-discord iframe { width: 310px; height: 95px; }
+
+    .preview-placeholder {
+      position: absolute; display: flex; flex-direction: column; align-items: center; gap: 12px;
+      color: var(--m-text-3); font-size: 13px; font-weight: 500; text-align: center; padding: 10px; z-index: 2;
+    }
+    .preview-placeholder svg { width: 44px; height: 44px; stroke: #4a4955; }
+
+    /* Adres dla iPhone */
+    .url-box {
+      background: var(--m-field); border: 1px solid var(--m-line-strong); border-radius: 999px;
+      padding: 8px 8px 8px 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    }
+    .url-box .url { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--m-accent); font-weight: 700; word-break: break-all; user-select: text; }
+    .scale-value { font-size: 12px; color: var(--m-accent); font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+  </style>
+</head>
+<body>
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <symbol id="i-camera" viewBox="0 0 24 24"><path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/></symbol>
+    <symbol id="i-tune" viewBox="0 0 24 24"><path d="M3 17v2h6v-2H3zM3 5v2h10V5H3zm10 16v-2h8v-2h-8v-2h-2v6h2zM7 9v2H3v2h4v2h2V9H7zm14 4v-2H11v2h10zm-6-4h2V7h4V5h-4V3h-2v6z"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.48.48 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M17.65 6.35A7.958 7.958 0 0 0 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08A5.99 5.99 0 0 1 12 18c-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M16 1H8C6.34 1 5 2.34 5 4v16c0 1.66 1.34 3 3 3h8c1.66 0 3-1.34 3-3V4c0-1.66-1.34-3-3-3zm-2 20h-4v-1h4v1zm3.25-3H6.75V4h10.5v14z"/></symbol>
+    <symbol id="i-android" viewBox="0 0 24 24"><path d="M17.6 9.48l1.84-3.18c.16-.31.04-.69-.26-.85a.637.637 0 0 0-.83.22l-1.88 3.24a11.43 11.43 0 0 0-8.94 0L5.65 5.67a.643.643 0 0 0-.87-.2c-.28.18-.37.54-.22.83L6.4 9.48A10.78 10.78 0 0 0 1 18h22a10.78 10.78 0 0 0-5.4-8.52zM7 15.25a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zm10 0a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5z"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M12 4.5C7 4.5 2.73 7.61 1 12c1.73 4.39 6 7.5 11 7.5s9.27-3.11 11-7.5c-1.73-4.39-6-7.5-11-7.5zM12 17c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></symbol>
+    <symbol id="i-save" viewBox="0 0 24 24"><path d="M17 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></symbol>
+  </svg>
+
+  <!-- PASEK OKNA -->
+  <div class="m-titlebar">
+    <div class="m-titlebar-brand">
+      <img src="assets/icon.svg" alt="">
+      <span class="m-titlebar-name">Pitaya Cam</span>
+    </div>
+    <div class="m-titlebar-actions">
+      <div class="m-update-pill" id="updatePill" title="Dostępna aktualizacja"><svg class="ico"><use href="#i-download"/></svg>Aktualizacja</div>
+      <button class="m-win-btn" id="btnSettings" onclick="PitayaUI.openModal('modalSettings')" title="Ustawienia i aktualizacje"><svg class="ico"><use href="#i-gear"/></svg><span class="m-dot"></span></button>
+      <div class="m-win-sep"></div>
+      <button class="m-win-btn" data-win="min" title="Minimalizuj"><svg viewBox="0 0 12 12"><path d="M1 6.5h10"/></svg></button>
+      <button class="m-win-btn close" data-win="close" title="Schowaj do zasobnika"><svg viewBox="0 0 12 12"><path d="M1.5 1.5l9 9M10.5 1.5l-9 9"/></svg></button>
+    </div>
+  </div>
+
+  <div class="m-content">
+    <div class="m-container">
+      <div class="m-hero">
+        <div class="m-hero-brand">
+          <div class="m-logo-box"><img src="assets/icon.svg" alt="Pitaya Cam"></div>
+          <div style="flex:1; min-width:0;">
+            <div class="m-hero-kicker">Pitayas</div>
+            <div class="m-hero-title">Pitaya <span>Cam</span></div>
+          </div>
+          <button id="toggleViewBtn" class="m-btn small">Ukryj podgląd</button>
+        </div>
+      </div>
+
+      <div class="m-tabs">
+        <button class="m-tab active" id="tabMain"><svg class="ico"><use href="#i-camera"/></svg>Kamera</button>
+        <button class="m-tab" id="tabOptions"><svg class="ico"><use href="#i-tune"/></svg>Opcje</button>
+      </div>
+
+      <!-- ZAKŁADKA: KAMERA -->
+      <div class="m-view active" id="viewMain">
+        <section id="previewSection" class="preview-wrapper">
+          <video id="webcamPreview" autoplay playsinline muted style="display: none;"></video>
+          <img id="previewImg" alt="Podgląd" style="display: none;">
+
+          <div id="widgetContainer" class="widget-container">
+            <iframe id="widgetFrame" src="" allowtransparency="true"></iframe>
+          </div>
+
+          <div id="previewFallback" class="preview-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/>
+              <circle cx="12" cy="13" r="3"/>
+            </svg>
+            <span>Kamera nieaktywna</span>
+          </div>
+        </section>
+
+        <div class="m-panel">
+          <div class="m-panel-header">
+            <span class="m-panel-title">Źródło sygnału</span>
+            <div class="m-status">
+              <span id="statusDot" class="m-status-dot"></span>
+              <span id="statusText">Gotowy</span>
+            </div>
+          </div>
+          <div class="m-panel-body">
+            <div class="m-row">
+              <select id="deviceList" class="m-select"></select>
+              <button id="refreshDevices" class="m-btn icon-only" title="Odśwież urządzenia"><svg class="ico"><use href="#i-refresh"/></svg></button>
+            </div>
+            <button id="streamActionBtn" class="m-btn accent block">Uruchom kamerę</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ZAKŁADKA: OPCJE -->
+      <div class="m-view" id="viewOptions">
+        <div class="m-panel">
+          <div class="m-panel-header">
+            <span class="m-panel-title">iPhone przez Wi‑Fi</span>
+            <span class="m-chip muted">Safari</span>
+          </div>
+          <div class="m-panel-body">
+            <div class="url-box">
+              <span class="url" id="urlBadge">Pobieranie adresu…</span>
+              <button class="m-btn icon-only small" id="copyUrlBtn" title="Kopiuj adres"><svg class="ico"><use href="#i-copy"/></svg></button>
+            </div>
+            <div class="m-small">Otwórz ten adres w Safari na iPhonie (ta sama sieć Wi‑Fi).</div>
+            <div class="m-field">
+              <label class="m-label" for="portInput">Port serwera (iPhone)</label>
+              <input type="number" id="portInput" class="m-input" min="1024" max="65535" />
+            </div>
+          </div>
+        </div>
+
+        <div class="m-panel">
+          <div class="m-panel-header">
+            <span class="m-panel-title">Widżet muzyczny</span>
+            <span class="m-chip muted">6klabs</span>
+          </div>
+          <div class="m-panel-body">
+            <div class="m-field">
+              <label class="m-label" for="widgetPosInput">Pozycja widżetu</label>
+              <select id="widgetPosInput" class="m-select">
+                <option value="none">Wyłączony</option>
+                <option value="left">Po lewej (dół)</option>
+                <option value="right">Po prawej (dół)</option>
+              </select>
+            </div>
+            <div class="m-field">
+              <label class="m-label" for="widgetUrlInput">Link do widżetu 6klabs</label>
+              <input type="text" id="widgetUrlInput" class="m-input" placeholder="Wklej link https://6klabs.com/widget/amuse/..." />
+            </div>
+            <div class="m-field">
+              <label class="m-label" for="widgetStyleInput">Styl motywu</label>
+              <select id="widgetStyleInput" class="m-select">
+                <option value="auto">Wykryj automatycznie</option>
+                <option value="boxy">Boxy</option>
+                <option value="compact">Compact</option>
+                <option value="gallery">Gallery (Pionowy)</option>
+                <option value="minimal">Minimal</option>
+                <option value="macos">macOS</option>
+                <option value="shell">Shell</option>
+                <option value="discord">Discord</option>
+              </select>
+            </div>
+            <div class="m-field">
+              <div style="display:flex; justify-content:space-between; align-items:center;">
+                <label class="m-label" for="widgetScaleInput">Wielkość / skala</label>
+                <span id="scaleLabel" class="scale-value">100%</span>
+              </div>
+              <input type="range" id="widgetScaleInput" min="50" max="150" value="100" />
+            </div>
+          </div>
+        </div>
+
+        <button id="saveConfigBtn" class="m-btn accent block"><svg class="ico"><use href="#i-save"/></svg>Zapisz i zrestartuj aplikację</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: USTAWIENIA / AKTUALIZACJE -->
+  <div class="m-modal-overlay" id="modalSettings">
+    <div class="m-modal">
+      <div class="m-modal-header">
+        <span class="m-modal-title">Ustawienia</span>
+        <button class="m-modal-close" onclick="PitayaUI.closeModal('modalSettings')">✕</button>
+      </div>
+      <div class="m-modal-body">
+        <div class="m-about">
+          <img src="assets/icon.svg" alt="">
+          <div>
+            <div class="m-about-name">Pitaya Cam</div>
+            <div class="m-about-desc">Wirtualna kamera z telefonu dla Linuxa (Android &amp; iPhone)</div>
+            <div class="m-small">Wersja: <span id="appVersionText">—</span></div>
+          </div>
+        </div>
+        <div class="m-update-card">
+          <div class="m-update-head">
+            <div>
+              <div class="m-update-title">Aktualizacje z GitHub</div>
+              <div class="m-update-status" id="updateStatusText">Sprawdź, czy jest nowsza wersja w repozytorium</div>
+            </div>
+            <button class="m-btn small" id="btnCheckUpdate">Sprawdź</button>
+          </div>
+          <div class="m-update-details" id="updateDetails">
+            <div id="updateInfo"></div>
+            <div style="display:flex; gap:8px;">
+              <button class="m-btn small success" id="btnApplyUpdate">Zainstaluj aktualizację</button>
+              <button class="m-btn small accent" id="btnRestartApp" style="display:none;">Uruchom ponownie</button>
+            </div>
+          </div>
+        </div>
+        <div class="m-small">Repozytorium: <a class="m-link" id="repoLink" href="#">github.com/MangoLabz/Pitayas-Cam</a></div>
+      </div>
+      <div class="m-modal-footer">
+        <button class="m-btn small accent" onclick="PitayaUI.closeModal('modalSettings')">Zamknij</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const { ipcRenderer } = require('electron');
+
+    window.pitayaBridge = {
+      minimize: () => ipcRenderer.send('win-minimize'),
+      close: () => ipcRenderer.send('win-close'),
+      getAppInfo: () => ipcRenderer.invoke('app-info'),
+      checkUpdate: () => ipcRenderer.invoke('update-check'),
+      applyUpdate: () => ipcRenderer.invoke('update-apply'),
+      restart: () => ipcRenderer.send('update-restart'),
+      openExternal: (url) => ipcRenderer.invoke('open-external', url)
+    };
+  </script>
+  <script src="pitaya-ui.js"></script>
+  <script>
+    let isStreaming = false;
+    let localStream = null;
+    let iphoneOnline = false;
+    let currentLocalIp = '127.0.0.1';
+
+    const previewSection = document.getElementById('previewSection');
+    const toggleViewBtn = document.getElementById('toggleViewBtn');
+    const video = document.getElementById('webcamPreview');
+    const previewImg = document.getElementById('previewImg');
+    const fallback = document.getElementById('previewFallback');
+    const streamBtn = document.getElementById('streamActionBtn');
+    const deviceSelect = document.getElementById('deviceList');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+
+    const tabMain = document.getElementById('tabMain');
+    const tabOptions = document.getElementById('tabOptions');
+    const viewMain = document.getElementById('viewMain');
+    const viewOptions = document.getElementById('viewOptions');
+
+    const urlBadge = document.getElementById('urlBadge');
+    const portInput = document.getElementById('portInput');
+    const widgetPosInput = document.getElementById('widgetPosInput');
+    const widgetUrlInput = document.getElementById('widgetUrlInput');
+    const widgetStyleInput = document.getElementById('widgetStyleInput');
+    const widgetScaleInput = document.getElementById('widgetScaleInput');
+    const scaleLabel = document.getElementById('scaleLabel');
+    const widgetContainer = document.getElementById('widgetContainer');
+    const widgetFrame = document.getElementById('widgetFrame');
+    const saveConfigBtn = document.getElementById('saveConfigBtn');
+
+    const FALLBACK_HTML = fallback.innerHTML;
+
+    function switchView(name) {
+      const isMain = name === 'main';
+      tabMain.classList.toggle('active', isMain);
+      tabOptions.classList.toggle('active', !isMain);
+      viewMain.classList.toggle('active', isMain);
+      viewOptions.classList.toggle('active', !isMain);
+    }
+
+    tabMain.addEventListener('click', () => switchView('main'));
+    tabOptions.addEventListener('click', () => switchView('options'));
+
+    ipcRenderer.invoke('get-config').then(cfg => {
+      currentLocalIp = cfg.ip;
+      portInput.value = cfg.port;
+      urlBadge.textContent = `http://${currentLocalIp}:${cfg.port}`;
+
+      widgetPosInput.value = cfg.widgetPos || 'none';
+      widgetUrlInput.value = cfg.widgetUrl || '';
+      widgetStyleInput.value = cfg.widgetStyle || 'auto';
+      widgetScaleInput.value = cfg.widgetScale || 100;
+      scaleLabel.textContent = `${widgetScaleInput.value}%`;
+
+      updateWidgetPreview();
+    });
+
+    document.getElementById('copyUrlBtn').addEventListener('click', () => {
+      navigator.clipboard.writeText(urlBadge.textContent);
+      PitayaUI.showToast('Skopiowano adres do schowka', 'success');
+    });
+
+    portInput.addEventListener('input', () => {
+      const p = portInput.value || '2137';
+      urlBadge.textContent = `http://${currentLocalIp}:${p}`;
+    });
+
+    widgetScaleInput.addEventListener('input', () => {
+      scaleLabel.textContent = `${widgetScaleInput.value}%`;
+      updateWidgetPreview();
+    });
+
+    widgetPosInput.addEventListener('change', updateWidgetPreview);
+    widgetStyleInput.addEventListener('change', updateWidgetPreview);
+
+    widgetUrlInput.addEventListener('change', async () => {
+      const val = widgetUrlInput.value.trim();
+      if (val.startsWith('http') && widgetStyleInput.value === 'auto') {
+        const detected = await ipcRenderer.invoke('detect-widget-style', val);
+        applyWidgetAppearance(detected);
+      } else {
+        updateWidgetPreview();
+      }
+    });
+
+    async function updateWidgetPreview() {
+      const val = widgetUrlInput.value.trim();
+      let style = widgetStyleInput.value;
+
+      if (style === 'auto' && val.startsWith('http')) {
+        style = await ipcRenderer.invoke('detect-widget-style', val);
+      } else if (style === 'auto') {
+        style = 'boxy';
+      }
+
+      applyWidgetAppearance(style);
+    }
+
+    function applyWidgetAppearance(style) {
+      const pos = widgetPosInput.value;
+      const url = widgetUrlInput.value.trim();
+      const scale = (widgetScaleInput.value || 100) / 100;
+
+      if (pos === 'none' || !url) {
+        widgetContainer.style.display = 'none';
+        widgetFrame.src = '';
+        return;
+      }
+
+      widgetContainer.className = `widget-container ${pos} style-${style}`;
+      widgetContainer.style.transform = `scale(${scale})`;
+      widgetContainer.style.display = 'block';
+
+      if (widgetFrame.src !== url) {
+        widgetFrame.src = url;
+      }
+    }
+
+    saveConfigBtn.addEventListener('click', () => {
+      ipcRenderer.invoke('save-config', {
+        port: portInput.value,
+        widgetPos: widgetPosInput.value,
+        widgetUrl: widgetUrlInput.value.trim(),
+        widgetStyle: widgetStyleInput.value,
+        widgetScale: widgetScaleInput.value
+      });
+    });
+
+    toggleViewBtn.addEventListener('click', () => {
+      const isHidden = previewSection.classList.toggle('hidden');
+      toggleViewBtn.textContent = isHidden ? 'Pokaż podgląd' : 'Ukryj podgląd';
+    });
+
+    async function scanDevices() {
+      const prev = deviceSelect.value;
+      deviceSelect.innerHTML = '';
+      let found = false;
+
+      if (iphoneOnline) {
+        const opt = document.createElement('option');
+        opt.value = 'iphone_web';
+        opt.dataset.type = 'iphone_web';
+        opt.textContent = '📱 iPhone (Połączono bezprzewodowo)';
+        deviceSelect.appendChild(opt);
+        found = true;
+      }
+
+      const adbDevs = await ipcRenderer.invoke('get-adb-devices');
+      adbDevs.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.serial;
+        opt.dataset.type = 'android';
+        opt.textContent = d.label;
+        deviceSelect.appendChild(opt);
+        found = true;
+      });
+
+      try {
+        const all = await navigator.mediaDevices.enumerateDevices();
+        all.filter(d => d.kind === 'videoinput').forEach(d => {
+          const name = d.label || 'Kamera lokalna';
+          if (name.toLowerCase().includes('pitaya') || name.toLowerCase().includes('mango') || name.toLowerCase().includes('loopback')) return;
+          const opt = document.createElement('option');
+          opt.value = d.deviceId;
+          opt.dataset.type = 'browser_cam';
+          opt.textContent = `📷 ${name}`;
+          deviceSelect.appendChild(opt);
+          found = true;
+        });
+      } catch (e) {}
+
+      if (!found) {
+        deviceSelect.innerHTML = '<option disabled selected>Brak podłączonych urządzeń</option>';
+      } else if (prev) {
+        deviceSelect.value = prev;
+      }
+    }
+
+    document.getElementById('refreshDevices').addEventListener('click', scanDevices);
+    scanDevices();
+
+    function setStreamButton(label, running, disabled = false) {
+      streamBtn.textContent = label;
+      streamBtn.classList.toggle('danger', running);
+      streamBtn.classList.toggle('accent', !running);
+      streamBtn.disabled = disabled;
+    }
+
+    ipcRenderer.on('iphone-connected', (event, connected) => {
+      iphoneOnline = connected;
+      scanDevices();
+
+      if (connected) {
+        deviceSelect.value = 'iphone_web';
+        video.style.display = 'none';
+        previewImg.style.display = 'block';
+        fallback.style.display = 'none';
+        statusDot.classList.add('active');
+        statusText.textContent = 'iPhone połączony';
+        isStreaming = true;
+        setStreamButton('iPhone nadaje na żywo', true, true);
+      } else {
+        previewImg.style.display = 'none';
+        fallback.style.display = 'flex';
+        statusDot.classList.remove('active');
+        statusText.textContent = 'Rozłączono';
+        isStreaming = false;
+        setStreamButton('Uruchom kamerę', false);
+      }
+    });
+
+    ipcRenderer.on('iphone-frame', (event, buffer) => {
+      if (previewImg.style.display !== 'none') {
+        const blob = new Blob([buffer], { type: 'image/jpeg' });
+        const old = previewImg.src;
+        previewImg.src = URL.createObjectURL(blob);
+        if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      }
+    });
+
+    streamBtn.addEventListener('click', async () => {
+      const opt = deviceSelect.selectedOptions[0];
+      if (!opt || opt.disabled) return;
+
+      if (!isStreaming) {
+        streamBtn.textContent = 'Łączenie…';
+        streamBtn.disabled = true;
+
+        if (opt.dataset.type === 'android') {
+          await ipcRenderer.invoke('start-android-stream', {
+            serial: opt.value,
+            resolution: '1920x1080',
+            facing: 'front'
+          });
+
+          setTimeout(async () => {
+            try {
+              const allDevs = await navigator.mediaDevices.enumerateDevices();
+              const camDev = allDevs.find(d =>
+                d.kind === 'videoinput' &&
+                (d.label.toLowerCase().includes('pitaya cam') || d.label.toLowerCase().includes('mango cam') || d.label.toLowerCase().includes('loopback'))
+              );
+
+              if (camDev) {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                  video: { deviceId: { exact: camDev.deviceId } }
+                });
+                video.srcObject = stream;
+                video.style.display = 'block';
+                previewImg.style.display = 'none';
+                fallback.style.display = 'none';
+                localStream = stream;
+              } else {
+                video.style.display = 'none';
+                previewImg.style.display = 'none';
+                fallback.style.display = 'flex';
+                fallback.textContent = '🟢 Sygnał z telefonu jest aktywny';
+              }
+            } catch (e) {
+              fallback.style.display = 'flex';
+              fallback.textContent = '🟢 Sygnał z telefonu jest aktywny';
+            }
+
+            isStreaming = true;
+            statusDot.classList.add('active');
+            statusText.textContent = 'Android aktywny';
+            setStreamButton('Zatrzymaj kamerę', true);
+          }, 4000);
+
+        } else if (opt.dataset.type === 'browser_cam') {
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: opt.value } }
+            });
+            video.srcObject = stream;
+            video.style.display = 'block';
+            previewImg.style.display = 'none';
+            fallback.style.display = 'none';
+            localStream = stream;
+            isStreaming = true;
+            statusDot.classList.add('active');
+            statusText.textContent = 'Kamera aktywna';
+            setStreamButton('Zatrzymaj kamerę', true);
+          } catch (err) {
+            PitayaUI.showToast(err.message, 'error');
+            setStreamButton('Uruchom kamerę', false);
+          }
+        } else {
+          setStreamButton('Uruchom kamerę', false);
+        }
+
+      } else {
+        await ipcRenderer.invoke('stop-stream');
+        if (localStream) {
+          localStream.getTracks().forEach(t => t.stop());
+          video.srcObject = null;
+        }
+        video.style.display = 'none';
+        previewImg.style.display = 'none';
+        fallback.style.display = 'flex';
+        fallback.innerHTML = FALLBACK_HTML;
+        statusDot.classList.remove('active');
+        statusText.textContent = 'Zatrzymano';
+        setStreamButton('Uruchom kamerę', false);
+        isStreaming = false;
+      }
+    });
+  </script>
+</body>
+</html>
