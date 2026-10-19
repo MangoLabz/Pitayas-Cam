@@ -1,5 +1,5 @@
 // ═══════ AKTUALIZATOR GITHUB ═══════
-// Wspólny moduł aktualizacji aplikacji Pitayas.
+// Aktualizator GitHub — część Pitaya Core.
 //  • uruchomienie z klonu gita  → git fetch + git pull (i npm install, gdy zmieniły się zależności)
 //  • AppImage                    → pobranie nowego AppImage z najnowszego release'u i podmiana pliku
 //  • inne paczki (rpm, exe…)     → otwarcie strony release'u w przeglądarce
@@ -180,4 +180,4 @@ function createUpdater({ repo, branch = 'main', appDir }) {
     return { check, apply, restart, repoUrl: `https://github.com/${repo}` };
 }
 
-module.exports = { createUpdater };
+module.exports = { createUpdater, compareVersions };

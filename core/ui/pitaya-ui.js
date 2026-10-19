@@ -1,8 +1,7 @@
 // ═══════ PITAYA UI ═══════
 // Wspólna obsługa okna (pasek tytułu, modale, toasty) i aktualizacji z GitHuba.
-// Każda aplikacja udostępnia window.pitayaBridge z metodami:
-//   minimize, close, getAppInfo(),
-//   checkUpdate(), applyUpdate(), restart(), openExternal(url)
+// Część Pitaya Core — window.pitayaBridge tworzy core/bridge.js
+// (minimize, close, getAppInfo, openDataDir, checkUpdate, applyUpdate, restart, openExternal).
 (function () {
     const bridge = window.pitayaBridge;
     const $ = (id) => document.getElementById(id);
@@ -163,6 +162,8 @@
         if (restart) restart.addEventListener('click', () => bridge.restart());
         const pill = $('updatePill');
         if (pill) pill.addEventListener('click', () => openModal('modalSettings'));
+        const dataBtn = $('btnOpenDataDir');
+        if (dataBtn) dataBtn.addEventListener('click', () => bridge.openDataDir());
         const repo = $('repoLink');
         if (repo) repo.addEventListener('click', (e) => {
             e.preventDefault();
@@ -174,6 +175,7 @@
     bridge.getAppInfo().then(info => {
         document.querySelectorAll('[data-app-version]').forEach(el => { el.textContent = `v${info.version}`; });
         if ($('appVersionText')) $('appVersionText').textContent = info.version;
+        if ($('dataDirText')) $('dataDirText').textContent = info.dataDir;
         const repo = $('repoLink');
         if (repo) {
             repo.dataset.href = info.repoUrl;

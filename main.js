@@ -1,8 +1,4 @@
-process.on('uncaughtException', (err) => {
-    console.error('Przechwycony błąd:', err.message);
-});
-
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog } = require('electron');
 const path = require('path');
 const http = require('http');
 const https = require('https');
@@ -10,13 +6,21 @@ const os = require('os');
 const fs = require('fs');
 const { spawn, exec } = require('child_process');
 const WebSocket = require('ws');
-const { createUpdater } = require('./updater');
-
-const updater = createUpdater({ repo: 'MangoLabz/Pitayas-Cam', branch: 'main', appDir: __dirname });
-
-// Ustawienia: jeśli jest folder z czasów Mango (~/.config/mangocam), używamy go dalej
-const LEGACY_USER_DATA = path.join(app.getPath('appData'), 'mangocam');
-if (fs.existsSync(LEGACY_USER_DATA)) app.setPath('userData', LEGACY_USER_DATA);
+// Pitaya Core: dane w ~/.config/Pitayas/Cam, ustawienia, logi, aktualizacje.
+// Ustawienia z czasów Mango (~/.config/mangocam) i pierwszych wersji Pitaya przenosimy przy pierwszym starcie.
+const core = require('./core').create({
+    id: 'cam',
+    folder: 'Cam',
+    name: 'Pitaya Cam',
+    repo: 'MangoLabz/Pitayas-Cam',
+    appDir: __dirname,
+    defaults: { port: 2137, widgetPos: 'none', widgetUrl: '', widgetStyle: 'boxy', widgetScale: 100 },
+    legacy: [
+        { from: 'mangocam/mangocam-config.json', to: 'settings.json' },
+        { from: 'mangocam/pitayacam-config.json', to: 'settings.json' },
+        { from: 'pitayacam/pitayacam-config.json', to: 'settings.json' },
+    ],
+});
 const ICON_PATH = path.join(__dirname, 'build', 'icons', '512x512.png');
 const TRAY_ICON_PATH = path.join(__dirname, 'build', 'icons', '32x32.png');
 
@@ -31,26 +35,12 @@ let httpServer = null;
 const MASTER_DEV = "/dev/video10";
 const FEED_DEV = "/dev/video12";
 
-const LEGACY_CONFIG = path.join(app.getPath('userData'), 'mangocam-config.json');
-const configPath = fs.existsSync(LEGACY_CONFIG)
-    ? LEGACY_CONFIG
-    : path.join(app.getPath('userData'), 'pitayacam-config.json');
-let PORT = 2137;
-let widgetPos = 'none';
-let widgetUrl = '';
-let widgetStyle = 'boxy';
-let widgetScale = 100;
-
-try {
-    if (fs.existsSync(configPath)) {
-        const cfg = JSON.parse(fs.readFileSync(configPath));
-        if (cfg.port) PORT = cfg.port;
-        if (cfg.widgetPos) widgetPos = cfg.widgetPos;
-        if (cfg.widgetUrl !== undefined) widgetUrl = cfg.widgetUrl;
-        if (cfg.widgetStyle) widgetStyle = cfg.widgetStyle;
-        if (cfg.widgetScale) widgetScale = cfg.widgetScale;
-    }
-} catch(e) {}
+const cfg = core.settings.all();
+const PORT = parseInt(cfg.port, 10) || 2137;
+const widgetPos = cfg.widgetPos || 'none';
+const widgetUrl = cfg.widgetUrl || '';
+const widgetStyle = cfg.widgetStyle || 'boxy';
+const widgetScale = parseInt(cfg.widgetScale, 10) || 100;
 
 function getLocalIp() {
     const interfaces = os.networkInterfaces();
@@ -328,14 +318,18 @@ ipcMain.handle('get-config', () => {
 
 ipcMain.handle('save-config', (event, newConfig) => {
     try {
-        fs.writeFileSync(configPath, JSON.stringify({
-            port: parseInt(newConfig.port),
-                                                    widgetPos: newConfig.widgetPos,
-                                                    widgetUrl: newConfig.widgetUrl,
-                                                    widgetStyle: newConfig.widgetStyle,
-                                                    widgetScale: parseInt(newConfig.widgetScale)
-        }));
-    } catch(e) {}
+        core.settings.set({
+            port: parseInt(newConfig.port, 10) || 2137,
+            widgetPos: newConfig.widgetPos,
+            widgetUrl: newConfig.widgetUrl,
+            widgetStyle: newConfig.widgetStyle,
+            widgetScale: parseInt(newConfig.widgetScale, 10) || 100,
+        });
+    } catch (e) {
+        core.log.error('Nie udało się zapisać ustawień:', e);
+    }
+    isQuitting = true;
+    stopStreaming();
     app.relaunch();
     app.exit();
 });
@@ -391,21 +385,16 @@ function createTray() {
     });
 }
 
-ipcMain.on('win-minimize', () => { if (mainWindow) mainWindow.minimize(); });
-ipcMain.on('win-close', () => { if (mainWindow) mainWindow.hide(); });
+ipcMain.on('pitaya:win-minimize', () => { if (mainWindow) mainWindow.minimize(); });
+ipcMain.on('pitaya:win-close', () => { if (mainWindow) mainWindow.hide(); });
 
-// ═══════ AKTUALIZACJE GITHUB ═══════
-ipcMain.handle('app-info', () => ({ name: 'Pitaya Cam', version: app.getVersion(), repoUrl: updater.repoUrl }));
-ipcMain.handle('update-check', () => updater.check());
-ipcMain.handle('update-apply', () => updater.apply());
-ipcMain.on('update-restart', () => {
-    isQuitting = true;
-    stopStreaming();
-    if (httpServer) httpServer.close();
-    updater.restart();
-});
-ipcMain.handle('open-external', (event, url) => {
-    if (typeof url === 'string' && url.startsWith('https://github.com/')) shell.openExternal(url);
+// Wspólne kanały Pitaya Core: informacje, ustawienia, folder danych, aktualizacje
+core.registerIpc({
+    beforeRestart: () => {
+        isQuitting = true;
+        stopStreaming();
+        if (httpServer) httpServer.close();
+    },
 });
 ipcMain.handle('stop-stream', async () => {
     stopStreaming();
@@ -413,16 +402,12 @@ ipcMain.handle('stop-stream', async () => {
 });
 
 // Tylko jedna instancja — ponowne uruchomienie pokazuje okno schowane w zasobniku
-if (!app.requestSingleInstanceLock()) {
-    app.quit();
-} else {
-    app.on('second-instance', () => {
-        if (!mainWindow) return;
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.show();
-        mainWindow.focus();
-    });
-}
+core.singleInstance(() => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+});
 
 app.whenReady().then(() => {
     createWindow();
