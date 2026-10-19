@@ -54,14 +54,39 @@ async function download(url, dest, userAgent) {
     });
 }
 
+// Porównanie wersji jak w semver: 0.1.0 > 0.1.0-beta.2 > 0.1.0-beta > 0.0.9
+function parseVersion(v) {
+    const [core, pre = ''] = String(v).trim().replace(/^v/i, '').split(/-(.*)/s);
+    return { nums: core.split('.').map(n => parseInt(n, 10) || 0), pre: pre ? pre.split('.') : [] };
+}
+
 function compareVersions(a, b) {
-    const pa = String(a).replace(/^v/i, '').split(/[.-]/).map(n => parseInt(n, 10) || 0);
-    const pb = String(b).replace(/^v/i, '').split(/[.-]/).map(n => parseInt(n, 10) || 0);
-    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-        const d = (pa[i] || 0) - (pb[i] || 0);
+    const pa = parseVersion(a), pb = parseVersion(b);
+    for (let i = 0; i < Math.max(pa.nums.length, pb.nums.length); i++) {
+        const d = (pa.nums[i] || 0) - (pb.nums[i] || 0);
         if (d !== 0) return d > 0 ? 1 : -1;
     }
+    // Wersja bez dopisku (stabilna) jest nowsza niż ta sama z dopiskiem (beta)
+    if (!pa.pre.length || !pb.pre.length) return pa.pre.length === pb.pre.length ? 0 : (pa.pre.length ? -1 : 1);
+    for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i++) {
+        const x = pa.pre[i], y = pb.pre[i];
+        if (x === undefined) return -1;
+        if (y === undefined) return 1;
+        const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+        if (nx && ny && +x !== +y) return +x > +y ? 1 : -1;
+        if (nx !== ny) return nx ? -1 : 1;
+        if (x !== y) return x > y ? 1 : -1;
+    }
     return 0;
+}
+
+// /releases/latest pomija wydania testowe (pre-release), więc bierzemy całą listę
+// i wybieramy najwyższą wersję spośród opublikowanych (bez szkiców)
+async function fetchNewestRelease(repo, userAgent) {
+    const list = await fetchJson(`https://api.github.com/repos/${repo}/releases?per_page=30`, userAgent);
+    const published = (Array.isArray(list) ? list : []).filter(r => !r.draft && (r.tag_name || r.name));
+    published.sort((x, y) => compareVersions(y.tag_name || y.name, x.tag_name || x.name));
+    return published[0] || null;
 }
 
 function createUpdater({ repo, branch = 'main', appDir }) {
@@ -94,7 +119,7 @@ function createUpdater({ repo, branch = 'main', appDir }) {
                 return { ok: true, mode: 'git', currentVersion, localSha, remoteSha, behind, commits, hasUpdate: behind > 0 };
             }
 
-            const release = await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`, userAgent);
+            const release = await fetchNewestRelease(repo, userAgent);
             lastRelease = release;
             if (!release) return { ok: true, mode: 'release', currentVersion, hasUpdate: false, latestVersion: null };
             const latestVersion = (release.tag_name || release.name || '').replace(/^v/i, '');
@@ -106,6 +131,7 @@ function createUpdater({ repo, branch = 'main', appDir }) {
                 latestVersion,
                 notes: release.body || '',
                 url: release.html_url,
+                prerelease: Boolean(release.prerelease),
                 canAutoInstall: Boolean(process.env.APPIMAGE && asset),
                 hasUpdate: Boolean(latestVersion) && compareVersions(latestVersion, currentVersion) > 0
             };
@@ -127,7 +153,7 @@ function createUpdater({ repo, branch = 'main', appDir }) {
                 return { ok: true, restart: true };
             }
 
-            const release = lastRelease || await fetchJson(`https://api.github.com/repos/${repo}/releases/latest`, userAgent);
+            const release = lastRelease || await fetchNewestRelease(repo, userAgent);
             if (!release) return { ok: false, error: 'Brak opublikowanych wersji na GitHubie' };
             const asset = pickAsset(release);
             if (process.env.APPIMAGE && asset) {
