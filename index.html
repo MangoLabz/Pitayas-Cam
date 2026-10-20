@@ -39,6 +39,14 @@
       background: var(--m-field); border: 1px solid var(--m-line-strong); border-radius: 999px;
       padding: 8px 8px 8px 18px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
     }
+    .url-list { display: flex; flex-direction: column; gap: 8px; }
+    .url-item { display: flex; align-items: center; gap: 10px; background: var(--m-field); border: 1px solid var(--m-line-strong); border-radius: 999px; padding: 6px 6px 6px 8px; }
+    .url-item.usb { border-color: rgba(76, 195, 138, 0.5); }
+    .url-item .kind { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--m-item); color: var(--m-text-3); white-space: nowrap; }
+    .url-item.usb .kind { background: rgba(76, 195, 138, 0.15); color: var(--m-leaf); }
+    .url-item .url { flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--m-accent); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .steps { margin: 0 0 0 18px; display: none; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--m-text-2); line-height: 1.45; }
+    .steps.show { display: flex; }
     .url-box .url { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--m-accent); font-weight: 700; word-break: break-all; user-select: text; }
     .data-row { display: flex; align-items: center; gap: 10px; }
     .data-row code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--m-text-2); background: var(--m-surface); padding: 6px 10px; border-radius: 999px; }
@@ -129,21 +137,29 @@
             <button id="streamActionBtn" class="m-btn accent block">Uruchom kamerę</button>
           </div>
         </div>
+
+        <!-- iPhone: kablem (Hotspot osobisty po USB) albo przez Wi‑Fi -->
+        <div class="m-panel">
+          <div class="m-panel-header">
+            <span class="m-panel-title">iPhone</span>
+            <div class="m-status"><span id="usbDot" class="m-status-dot"></span><span id="usbText">Sprawdzanie…</span></div>
+          </div>
+          <div class="m-panel-body">
+            <ol class="steps" id="usbSteps"></ol>
+            <div class="url-list" id="urlList"></div>
+            <div class="m-small">Otwórz adres w <b>Safari</b> na iPhonie. Za pierwszym razem Safari ostrzeże o certyfikacie — dotknij „Pokaż szczegóły” → „odwiedź tę witrynę”.</div>
+          </div>
+        </div>
       </div>
 
       <!-- ZAKŁADKA: OPCJE -->
       <div class="m-view" id="viewOptions">
         <div class="m-panel">
           <div class="m-panel-header">
-            <span class="m-panel-title">iPhone przez Wi‑Fi</span>
-            <span class="m-chip muted">Safari</span>
+            <span class="m-panel-title">Serwer dla iPhone'a</span>
+            <span class="m-chip muted">HTTPS</span>
           </div>
           <div class="m-panel-body">
-            <div class="url-box">
-              <span class="url" id="urlBadge">Pobieranie adresu…</span>
-              <button class="m-btn icon-only small" id="copyUrlBtn" title="Kopiuj adres"><svg class="ico"><use href="#i-copy"/></svg></button>
-            </div>
-            <div class="m-small">Otwórz ten adres w Safari na iPhonie (ta sama sieć Wi‑Fi).</div>
             <div class="m-field">
               <label class="m-label" for="portInput">Port serwera (iPhone)</label>
               <input type="number" id="portInput" class="m-input" min="1024" max="65535" />
@@ -269,7 +285,6 @@
     const viewMain = document.getElementById('viewMain');
     const viewOptions = document.getElementById('viewOptions');
 
-    const urlBadge = document.getElementById('urlBadge');
     const portInput = document.getElementById('portInput');
     const widgetPosInput = document.getElementById('widgetPosInput');
     const widgetUrlInput = document.getElementById('widgetUrlInput');
@@ -296,7 +311,7 @@
     ipcRenderer.invoke('get-config').then(cfg => {
       currentLocalIp = cfg.ip;
       portInput.value = cfg.port;
-      urlBadge.textContent = `http://${currentLocalIp}:${cfg.port}`;
+      blockedPorts = cfg.blockedPorts || [];
 
       widgetPosInput.value = cfg.widgetPos || 'none';
       widgetUrlInput.value = cfg.widgetUrl || '';
@@ -307,15 +322,62 @@
       updateWidgetPreview();
     });
 
-    document.getElementById('copyUrlBtn').addEventListener('click', () => {
-      navigator.clipboard.writeText(urlBadge.textContent);
-      PitayaUI.showToast('Skopiowano adres do schowka', 'success');
+    // Porty blokowane przez Safari (np. 6666) — ostrzegamy od razu przy wpisywaniu
+    let blockedPorts = [];
+    portInput.addEventListener('change', () => {
+      const p = parseInt(portInput.value, 10);
+      if (blockedPorts.includes(p) || !(p >= 1024 && p <= 65535)) {
+        PitayaUI.showToast(`Port ${portInput.value} nie zadziała w Safari — użyj np. 2137 albo 8443.`, 'error');
+        portInput.value = 2137;
+      }
     });
 
-    portInput.addEventListener('input', () => {
-      const p = portInput.value || '2137';
-      urlBadge.textContent = `http://${currentLocalIp}:${p}`;
+    // ───── iPhone: stan kabla i adresy (odświeżane co 3 s) ─────
+    const KIND_LABEL = { usb: 'Kabel USB', wifi: 'Wi‑Fi', lan: 'Sieć' };
+    let lastIphoneKey = '';
+    async function refreshIphone() {
+      const s = await ipcRenderer.invoke('iphone-status');
+      const key = JSON.stringify(s);
+      if (key === lastIphoneKey) return;
+      lastIphoneKey = key;
+      const dot = document.getElementById('usbDot');
+      const text = document.getElementById('usbText');
+      const steps = document.getElementById('usbSteps');
+      dot.classList.toggle('active', s.usb.network);
+      if (!s.server) {
+        text.textContent = `Serwer nie działa (port ${s.port} zajęty?)`;
+      } else if (s.usb.network) {
+        text.textContent = 'Połączono kablem';
+      } else if (s.usb.plugged) {
+        text.textContent = `${s.usb.name || 'iPhone'} podłączony kablem`;
+      } else {
+        text.textContent = s.addresses.length ? 'Kabel: brak iPhone\'a · sieć: gotowa' : 'Brak iPhone\'a i sieci';
+      }
+      const stepList = s.usb.plugged && !s.usb.network ? [
+        'Odblokuj iPhone\'a i dotknij „Zaufaj”, jeśli zapyta o ten komputer.',
+        'Włącz <b>Ustawienia → Hotspot osobisty → Pozwól innym na łączenie</b>.',
+        'Za kilka sekund pojawi się adres „Kabel USB” — otwórz go w Safari.',
+      ] : !s.usb.plugged ? [
+        'Po kablu: podłącz iPhone\'a i włącz Hotspot osobisty — obraz pójdzie przez USB.',
+        'Przez Wi‑Fi: iPhone i komputer w tej samej sieci — użyj adresu „Wi‑Fi” albo „Sieć”.',
+      ] : [];
+      steps.innerHTML = stepList.map((t) => `<li>${t}</li>`).join('');
+      steps.classList.toggle('show', stepList.length > 0);
+      document.getElementById('urlList').innerHTML = s.addresses.map((a) => `
+        <div class="url-item ${a.kind}">
+          <span class="kind">${KIND_LABEL[a.kind]}</span>
+          <span class="url">https://${a.ip}:${s.port}</span>
+          <button class="m-btn icon-only small" data-copy="https://${a.ip}:${s.port}" title="Kopiuj adres"><svg class="ico"><use href="#i-copy"/></svg></button>
+        </div>`).join('') || '<div class="m-small">Brak połączenia sieciowego.</div>';
+    }
+    document.getElementById('urlList').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-copy]');
+      if (!b) return;
+      navigator.clipboard.writeText(b.dataset.copy);
+      PitayaUI.showToast('Skopiowano adres do schowka', 'success');
     });
+    refreshIphone();
+    setInterval(refreshIphone, 3000);
 
     widgetScaleInput.addEventListener('input', () => {
       scaleLabel.textContent = `${widgetScaleInput.value}%`;
@@ -392,7 +454,7 @@
         const opt = document.createElement('option');
         opt.value = 'iphone_web';
         opt.dataset.type = 'iphone_web';
-        opt.textContent = '📱 iPhone (Połączono bezprzewodowo)';
+        opt.textContent = '📱 iPhone (Safari)';
         deviceSelect.appendChild(opt);
         found = true;
       }

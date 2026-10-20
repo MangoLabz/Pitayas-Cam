@@ -6,6 +6,7 @@ const os = require('os');
 const fs = require('fs');
 const { spawn, exec } = require('child_process');
 const WebSocket = require('ws');
+const iphone = require('./iphone');
 // Pitaya Core: dane w ~/.config/Pitayas/Cam, ustawienia, logi, aktualizacje.
 // Ustawienia z czasów Mango (~/.config/mangocam) i pierwszych wersji Pitaya przenosimy przy pierwszym starcie.
 const core = require('./core').create({
@@ -36,134 +37,59 @@ const MASTER_DEV = "/dev/video10";
 const FEED_DEV = "/dev/video12";
 
 const cfg = core.settings.all();
-const PORT = parseInt(cfg.port, 10) || 2137;
+// Port zablokowany przez Safari/Chromium (np. 6666) zamieniamy na bezpieczny i zapisujemy
+const PORT = iphone.safePort(cfg.port);
+if (PORT !== parseInt(cfg.port, 10)) {
+    core.settings.set('port', PORT);
+    core.log.warn(`Port ${cfg.port} jest blokowany przez przeglądarki — zmieniono na ${PORT}`);
+}
 const widgetPos = cfg.widgetPos || 'none';
 const widgetUrl = cfg.widgetUrl || '';
 const widgetStyle = cfg.widgetStyle || 'boxy';
 const widgetScale = parseInt(cfg.widgetScale, 10) || 100;
 
 function getLocalIp() {
-    const interfaces = os.networkInterfaces();
-    for (const name of Object.keys(interfaces)) {
-        if (name.includes('docker') || name.includes('veth') || name.includes('virbr') || name.includes('tailscale') || name.includes('tun')) continue;
-        for (const iface of interfaces[name]) {
-            if (iface.family === 'IPv4' && !iface.internal) {
-                return iface.address;
-            }
-        }
-    }
-    return '127.0.0.1';
+    const first = iphone.listAddresses()[0];
+    return first ? first.ip : '127.0.0.1';
 }
 
+// Serwer dla iPhone'a: HTTPS (Safari daje kamerę tylko bezpiecznym stronom) + WebSocket z klatkami
 function startHttpServer() {
-    const htmlClient = `<!DOCTYPE html>
-    <html lang="pl">
-    <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Pitaya Cam Streamer</title>
-    <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
-    body { background: #0c0c0e; color: #fff; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; }
-    .card { background: #18181b; border: 1px solid rgba(255,255,255,0.08); padding: 24px; border-radius: 20px; width: 100%; max-width: 420px; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
-    h2 { background: linear-gradient(135deg, #ff9bd0, #e6007e); -webkit-background-clip: text; -webkit-text-fill-color: transparent; margin-bottom: 6px; font-size: 24px; font-weight: 800; }
-    p.sub { color: #a1a1aa; font-size: 13px; margin-bottom: 20px; }
-    .preview-box { width: 100%; height: 380px; background: #000; border-radius: 14px; overflow: hidden; position: relative; border: 1px solid #27272a; margin-bottom: 18px; }
-    video { width: 100%; height: 100%; object-fit: contain; }
-    button { background: linear-gradient(135deg, #ff4fa6, #a3005a); color: white; border: none; padding: 14px; width: 100%; font-size: 15px; font-weight: 700; border-radius: 12px; cursor: pointer; transition: opacity 0.2s; box-shadow: 0 4px 14px rgba(230,57,0,0.35); }
-    button:active { opacity: 0.85; }
-    #status { margin-top: 14px; font-size: 13px; font-weight: 600; color: #ff4fa6; }
-    </style>
-    </head>
-    <body>
-    <div class="card">
-    <h2>🐉 Pitaya Cam</h2>
-    <p class="sub">Transmisja kamery z telefonu</p>
-    <div class="preview-box">
-    <video id="v" autoplay playsinline muted></video>
-    </div>
-    <button id="btn">Uruchom kamerę</button>
-    <div id="status">Gotowy do połączenia</div>
-    </div>
-    <canvas id="c" style="display:none;"></canvas>
-
-    <script>
-    const v = document.getElementById('v');
-    const c = document.getElementById('c');
-    const ctx = c.getContext('2d');
-    const btn = document.getElementById('btn');
-    const st = document.getElementById('status');
-    let ws = null;
-    let timer = null;
-
-    btn.onclick = async () => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'user', width: { ideal: 1920 }, height: { ideal: 1080 } },
-                audio: false
-            });
-            v.srcObject = stream;
-            btn.style.display = 'none';
-            st.textContent = 'Łączenie z aplikacją...';
-
-            ws = new WebSocket('ws://' + location.host);
-            ws.binaryType = 'arraybuffer';
-
-            ws.onopen = () => {
-                st.textContent = '🟢 Przesyłanie aktywne';
-                v.onloadedmetadata = () => {
-                    c.width = v.videoWidth;
-                    c.height = v.videoHeight;
-                };
-                timer = setInterval(() => {
-                    if (v.readyState >= 2 && ws.readyState === WebSocket.OPEN) {
-                        if (c.width !== v.videoWidth || c.height !== v.videoHeight) {
-                            c.width = v.videoWidth;
-                            c.height = v.videoHeight;
-                        }
-                        ctx.drawImage(v, 0, 0, c.width, c.height);
-                        c.toBlob(blob => {
-                            if (blob && ws.readyState === WebSocket.OPEN) {
-                                blob.arrayBuffer().then(buf => ws.send(buf));
-                            }
-                        }, 'image/jpeg', 0.85);
-                    }
-                }, 33);
-            };
-
-            ws.onclose = () => {
-                st.textContent = '🔴 Rozłączono';
-                clearInterval(timer);
-            };
-        } catch (err) {
-            st.textContent = 'Błąd: ' + err.message;
+    const page = fs.readFileSync(path.join(__dirname, 'iphone-client.html'));
+    let tls;
+    try {
+        tls = iphone.ensureCert(core.paths.data, (...a) => core.log.info(...a));
+    } catch (err) {
+        core.log.error('Nie udało się utworzyć certyfikatu HTTPS:', err);
+        return;
+    }
+    httpServer = https.createServer(tls, (req, res) => {
+        if (req.url === '/' || req.url.startsWith('/?')) {
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+            res.end(page);
+        } else {
+            res.writeHead(404);
+            res.end();
         }
-    };
-    </script>
-    </body>
-    </html>`;
-
-    httpServer = http.createServer((req, res) => {
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-        res.end(htmlClient);
     });
+    httpServer.on('error', (err) => core.log.error(`Serwer iPhone (port ${PORT}):`, err.message));
 
     wss = new WebSocket.Server({ server: httpServer });
 
     wss.on('connection', (ws) => {
-        if (mainWindow) mainWindow.webContents.send('iphone-connected', true);
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('iphone-connected', true);
         startFfmpegPipeFromWeb();
 
         ws.on('message', (data) => {
             if (ffmpegMasterProc && ffmpegMasterProc.stdin && !ffmpegMasterProc.stdin.destroyed) {
                 try { ffmpegMasterProc.stdin.write(Buffer.from(data)); } catch (e) {}
             }
-            if (mainWindow) mainWindow.webContents.send('iphone-frame', Buffer.from(data));
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('iphone-frame', Buffer.from(data));
         });
 
             ws.on('close', () => {
                 stopStreaming();
-                if (mainWindow) mainWindow.webContents.send('iphone-connected', false);
+                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('iphone-connected', false);
             });
     });
 
@@ -305,8 +231,17 @@ ipcMain.handle('detect-widget-style', async (event, url) => {
     });
 });
 
+// Stan iPhone'a dla okna: adresy (kabel / Wi‑Fi) i czy telefon jest podłączony kablem
+ipcMain.handle('iphone-status', () => ({
+    port: PORT,
+    server: Boolean(httpServer && httpServer.listening),
+    addresses: iphone.listAddresses(),
+    usb: iphone.usbStatus(),
+}));
+
 ipcMain.handle('get-config', () => {
     return {
+        blockedPorts: iphone.BLOCKED_PORTS,
         port: PORT,
         ip: getLocalIp(),
                widgetPos: widgetPos,
@@ -319,7 +254,7 @@ ipcMain.handle('get-config', () => {
 ipcMain.handle('save-config', (event, newConfig) => {
     try {
         core.settings.set({
-            port: parseInt(newConfig.port, 10) || 2137,
+            port: iphone.safePort(newConfig.port),
             widgetPos: newConfig.widgetPos,
             widgetUrl: newConfig.widgetUrl,
             widgetStyle: newConfig.widgetStyle,

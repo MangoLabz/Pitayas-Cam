@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#121116">
+<title>Pitaya Cam</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, system-ui, sans-serif; -webkit-tap-highlight-color: transparent; }
+  body { background: #121116; color: #eeedf3; min-height: 100vh; display: flex; justify-content: center; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+  .wrap { width: 100%; max-width: 460px; display: flex; flex-direction: column; gap: 14px; }
+  .head { display: flex; align-items: center; gap: 12px; padding: 6px 4px; }
+  .logo { width: 44px; height: 44px; border-radius: 50%; background: #2a2932; display: grid; place-items: center; font-size: 24px; }
+  .kicker { font-size: 11px; font-weight: 700; letter-spacing: .18em; color: #ff4fa6; }
+  h1 { font-size: 22px; font-weight: 800; letter-spacing: -.02em; }
+  h1 span { background: linear-gradient(100deg, #ffb3dd, #ff4fa6 45%, #d4006f); -webkit-background-clip: text; color: transparent; }
+  .preview { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #0b0a0e; border: 1px solid rgba(255,255,255,.08); border-radius: 22px; overflow: hidden; }
+  video { width: 100%; height: 100%; object-fit: contain; }
+  .live { position: absolute; top: 10px; left: 10px; display: none; align-items: center; gap: 6px; background: rgba(0,0,0,.55); padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .live i { width: 8px; height: 8px; border-radius: 50%; background: #4cc38a; box-shadow: 0 0 8px #4cc38a; }
+  .on .live { display: flex; }
+  .panel { background: #1c1b22; border: 1px solid rgba(255,255,255,.06); border-radius: 22px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  label { font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #8e8c9b; display: block; margin-bottom: 6px; }
+  select { width: 100%; background: #17161c; color: #eeedf3; border: 1px solid rgba(255,255,255,.11); border-radius: 14px; padding: 11px 12px; font-size: 15px; -webkit-appearance: none; }
+  button { width: 100%; border: none; border-radius: 999px; padding: 15px; font-size: 16px; font-weight: 700; color: #1d1206; background: linear-gradient(135deg, #ff7fc0, #e6007e); box-shadow: 0 8px 22px rgba(255,60,160,.35); }
+  button.stop { background: linear-gradient(135deg, #ff6b7f, #e5484d); color: #fff; box-shadow: none; }
+  #status { font-size: 14px; font-weight: 600; color: #c2c0cc; text-align: center; min-height: 20px; }
+  #status.ok { color: #4cc38a; } #status.err { color: #ff5d73; } #status.warn { color: #ff9f1c; }
+  .stats { font-size: 12px; color: #8e8c9b; text-align: center; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="logo">🐉</div>
+    <div><div class="kicker">PITAYAS</div><h1>Pitaya <span>Cam</span></h1></div>
+  </div>
+
+  <div class="preview" id="preview">
+    <video id="v" autoplay playsinline muted></video>
+    <div class="live"><i></i>NA ŻYWO</div>
+  </div>
+
+  <div class="panel">
+    <div class="row">
+      <div><label for="facing">Kamera</label>
+        <select id="facing"><option value="user">Przednia</option><option value="environment">Tylna</option></select></div>
+      <div><label for="res">Jakość</label>
+        <select id="res"><option value="1920x1080">1080p</option><option value="1280x720">720p</option></select></div>
+    </div>
+    <button id="btn">Uruchom kamerę</button>
+    <div id="status">Gotowy do połączenia</div>
+    <div class="stats" id="stats"></div>
+  </div>
+</div>
+<canvas id="c" hidden></canvas>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const v = $('v'), c = $('c'), ctx = c.getContext('2d');
+  const btn = $('btn'), st = $('status'), stats = $('stats');
+  let stream = null, ws = null, timer = null, wakeLock = null, sent = 0, lastStat = Date.now();
+
+  function status(text, tone) { st.textContent = text; st.className = tone || ''; }
+
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    status('Otwórz tę stronę przez https:// — Safari udostępnia kamerę tylko na bezpiecznych stronach.', 'err');
+    btn.disabled = true;
+  }
+
+  async function keepAwake() {
+    try { if ('wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && stream) keepAwake(); });
+
+  function stop(message, tone) {
+    clearInterval(timer); timer = null;
+    if (ws) { ws.onclose = null; ws.close(); ws = null; }
+    if (stream) { stream.getTracks().forEach((t) => t.stop()); stream = null; }
+    if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+    v.srcObject = null;
+    $('preview').classList.remove('on');
+    btn.textContent = 'Uruchom kamerę'; btn.classList.remove('stop');
+    stats.textContent = '';
+    status(message || 'Zatrzymano', tone);
+  }
+
+  async function start() {
+    const [w, h] = $('res').value.split('x').map(Number);
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: $('facing').value, width: { ideal: w }, height: { ideal: h }, frameRate: { ideal: 30 } },
+        audio: false,
+      });
+    } catch (err) {
+      const msg = err.name === 'NotAllowedError' ? 'Brak zgody na kamerę — zezwól w Ustawienia → Safari → Kamera.' : `Nie można uruchomić kamery: ${err.message}`;
+      return status(msg, 'err');
+    }
+    v.srcObject = stream;
+    btn.textContent = 'Zatrzymaj'; btn.classList.add('stop');
+    status('Łączenie z komputerem…', 'warn');
+    keepAwake();
+
+    ws = new WebSocket(`wss://${location.host}`);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => {
+      status('Przesyłanie obrazu do Pitaya Cam', 'ok');
+      $('preview').classList.add('on');
+      timer = setInterval(sendFrame, 1000 / 30);
+    };
+    ws.onclose = () => stop('Rozłączono z komputerem — sprawdź kabel albo Wi‑Fi i spróbuj ponownie.', 'err');
+    ws.onerror = () => status('Błąd połączenia z komputerem', 'err');
+  }
+
+  function sendFrame() {
+    if (!ws || ws.readyState !== WebSocket.OPEN || v.readyState < 2) return;
+    // Nie dokładamy klatek, gdy poprzednie jeszcze nie wyszły — inaczej rośnie opóźnienie
+    if (ws.bufferedAmount > 512 * 1024) return;
+    if (c.width !== v.videoWidth || c.height !== v.videoHeight) { c.width = v.videoWidth; c.height = v.videoHeight; }
+    ctx.drawImage(v, 0, 0, c.width, c.height);
+    c.toBlob((blob) => {
+      if (blob && ws && ws.readyState === WebSocket.OPEN) blob.arrayBuffer().then((buf) => { ws.send(buf); sent++; });
+    }, 'image/jpeg', 0.85);
+    const now = Date.now();
+    if (now - lastStat > 1000) {
+      stats.textContent = `${c.width}×${c.height} · ${Math.round(sent * 1000 / (now - lastStat))} kl/s`;
+      sent = 0; lastStat = now;
+    }
+  }
+
+  btn.onclick = () => (stream ? stop() : start());
+  ['facing', 'res'].forEach((id) => $(id).addEventListener('change', () => { if (stream) { stop(); start(); } }));
+</script>
+</body>
+</html>
