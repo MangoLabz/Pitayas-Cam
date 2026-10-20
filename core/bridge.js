@@ -15,6 +15,7 @@ function makeBridge(ipcRenderer) {
         openDataDir: () => ipcRenderer.invoke('pitaya:open-data-dir'),
         checkUpdate: () => ipcRenderer.invoke('pitaya:update-check'),
         applyUpdate: () => ipcRenderer.invoke('pitaya:update-apply'),
+        onUpdateProgress: (cb) => ipcRenderer.on('pitaya:update-progress', (e, p) => cb(p)),
         restart: () => ipcRenderer.send('pitaya:update-restart'),
         openExternal: (url) => ipcRenderer.invoke('pitaya:open-external', url),
     };

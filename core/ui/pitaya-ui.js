@@ -91,7 +91,10 @@
         } else {
             status.textContent = `Dostępna wersja ${res.latestVersion} (masz ${res.currentVersion})`;
             info.innerHTML = res.notes ? `<div class="m-notes">${escapeHTML(res.notes)}</div>` : '';
-            applyBtn.textContent = res.canAutoInstall ? 'Pobierz i zainstaluj' : 'Pobierz ze strony GitHub';
+            const needsPassword = ['rpm', 'deb'].includes(res.installKind);
+            applyBtn.textContent = res.canAutoInstall ? 'Zainstaluj aktualizację' : 'Pobierz ze strony GitHub';
+            applyBtn.title = needsPassword ? 'System poprosi o hasło administratora' : '';
+            if (needsPassword && res.canAutoInstall) status.textContent += ' · instalacja poprosi o hasło administratora';
         }
         applyBtn.disabled = false;
         applyBtn.style.display = '';
@@ -151,6 +154,23 @@
         $('updateStatusText').textContent = 'Zaktualizowano! Uruchom aplikację ponownie.';
         $('updateStatusText').className = 'm-update-status t-ok';
         showToast('Aktualizacja zainstalowana — uruchom ponownie aplikację.', 'success');
+    }
+
+    // Postęp aktualizacji: pobieranie pakietu, potem instalacja (systemowe okno z hasłem)
+    if (bridge.onUpdateProgress) {
+        bridge.onUpdateProgress((p) => {
+            const applyBtn = $('btnApplyUpdate');
+            const status = $('updateStatusText');
+            if (!applyBtn || !status) return;
+            if (p.stage === 'download') {
+                applyBtn.textContent = `Pobieranie ${p.percent}%…`;
+                status.textContent = `Pobieranie nowej wersji${p.total ? ` (${(p.total / 1048576).toFixed(0)} MB)` : ''}…`;
+            } else if (p.stage === 'install') {
+                applyBtn.textContent = 'Instalowanie…';
+                status.textContent = 'Podaj hasło w oknie systemowym, aby zainstalować aktualizację.';
+                status.className = 'm-update-status t-warn';
+            }
+        });
     }
 
     function bindUpdateUI() {

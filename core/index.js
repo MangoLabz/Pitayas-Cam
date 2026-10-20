@@ -167,7 +167,9 @@ function create(options) {
         });
         if (updater) {
             ipcMain.handle('pitaya:update-check', () => updater.check());
-            ipcMain.handle('pitaya:update-apply', () => updater.apply());
+            ipcMain.handle('pitaya:update-apply', (event) => updater.apply({
+                onProgress: (p) => { if (!event.sender.isDestroyed()) event.sender.send('pitaya:update-progress', p); },
+            }));
             ipcMain.on('pitaya:update-restart', async () => {
                 try { if (beforeRestart) await beforeRestart(); } catch {}
                 updater.restart();

@@ -2,12 +2,14 @@
 // Aktualizator GitHub — część Pitaya Core.
 //  • uruchomienie z klonu gita  → git fetch + git pull (i npm install, gdy zmieniły się zależności)
 //  • AppImage                    → pobranie nowego AppImage z najnowszego release'u i podmiana pliku
+//  • pakiet RPM / DEB            → pobranie nowego pakietu i instalacja przez pkexec (systemowe okno z hasłem)
 //  • inne paczki (rpm, exe…)     → otwarcie strony release'u w przeglądarce
 const { app, shell } = require('electron');
 const https = require('https');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 function run(cmd, args, cwd, timeout = 60000) {
     return new Promise((resolve, reject) => {
@@ -39,12 +41,19 @@ async function fetchJson(url, userAgent) {
     return JSON.parse(data);
 }
 
-async function download(url, dest, userAgent) {
+async function download(url, dest, userAgent, onProgress) {
     const res = await request(url, userAgent);
     if (res.statusCode !== 200) {
         res.resume();
         throw new Error(`Pobieranie nie powiodło się (HTTP ${res.statusCode})`);
     }
+    const total = +res.headers['content-length'] || 0;
+    let got = 0, lastPct = -1;
+    res.on('data', (chunk) => {
+        got += chunk.length;
+        const pct = total ? Math.floor((got / total) * 100) : 0;
+        if (onProgress && pct !== lastPct) { lastPct = pct; onProgress({ stage: 'download', percent: pct, bytes: got, total }); }
+    });
     await new Promise((resolve, reject) => {
         const out = fs.createWriteStream(dest);
         res.pipe(out);
@@ -89,6 +98,51 @@ async function fetchNewestRelease(repo, userAgent) {
     return published[0] || null;
 }
 
+function whichSync(cmd) {
+    for (const dir of (process.env.PATH || '/usr/bin:/bin').split(':').concat(['/usr/bin', '/usr/sbin', '/bin'])) {
+        const p = path.join(dir, cmd);
+        try { if (fs.statSync(p).isFile()) return p; } catch {}
+    }
+    return null;
+}
+
+// Jak zainstalowano aplikację: z pakietu systemowego (rpm/deb), jako AppImage itd.
+let cachedKind = null;
+function installKind() {
+    if (cachedKind) return cachedKind;
+    cachedKind = 'other';
+    if (process.env.APPIMAGE) cachedKind = 'appimage';
+    else if (process.platform === 'win32') cachedKind = 'windows';
+    else if (process.platform === 'linux' && app.isPackaged) {
+        const exe = process.execPath;
+        const owns = (cmd, args) => { try { execFileSync(cmd, args, { stdio: 'ignore', timeout: 5000 }); return true; } catch { return false; } };
+        if (whichSync('rpm') && owns('rpm', ['-qf', exe])) cachedKind = 'rpm';
+        else if (whichSync('dpkg') && owns('dpkg', ['-S', exe])) cachedKind = 'deb';
+    }
+    return cachedKind;
+}
+
+// Instalacja pobranego pakietu z uprawnieniami administratora (pkexec pokazuje systemowe okno z hasłem)
+async function installPackage(kind, file) {
+    const pkexec = whichSync('pkexec');
+    if (!pkexec) throw new Error('Brak programu pkexec — zainstaluj pobrany pakiet ręcznie.');
+    let cmd;
+    if (kind === 'rpm') {
+        const dnf = whichSync('dnf') || whichSync('dnf5') || whichSync('yum');
+        cmd = dnf ? [dnf, 'install', '-y', file] : [whichSync('rpm'), '-U', '--replacepkgs', file];
+    } else {
+        const apt = whichSync('apt-get');
+        cmd = apt ? [apt, 'install', '-y', file] : [whichSync('dpkg'), '-i', file];
+    }
+    try {
+        await run(pkexec, cmd, os.tmpdir(), 15 * 60 * 1000);
+    } catch (err) {
+        // 126: okno z hasłem zamknięte, 127: brak uprawnień
+        if (/126|dismissed|Not authorized|127/i.test(err.message)) throw new Error('Instalacja anulowana — nie podano hasła administratora.');
+        throw new Error(`Instalacja pakietu nie powiodła się: ${err.message.split('\n').slice(-3).join(' ')}`);
+    }
+}
+
 function createUpdater({ repo, branch = 'main', appDir }) {
     const userAgent = `${repo.split('/')[1]}-Updater`;
     const isGitClone = !app.isPackaged && fs.existsSync(path.join(appDir, '.git'));
@@ -96,8 +150,11 @@ function createUpdater({ repo, branch = 'main', appDir }) {
 
     function pickAsset(release) {
         const assets = (release && release.assets) || [];
-        if (process.env.APPIMAGE) return assets.find(a => /\.AppImage$/i.test(a.name));
-        if (process.platform === 'win32') return assets.find(a => /\.exe$/i.test(a.name));
+        const kind = installKind();
+        if (kind === 'appimage') return assets.find(a => /\.AppImage$/i.test(a.name));
+        if (kind === 'windows') return assets.find(a => /\.exe$/i.test(a.name));
+        if (kind === 'rpm') return assets.find(a => /\.rpm$/i.test(a.name) && /x86_64|amd64|noarch/i.test(a.name) === (process.arch === 'x64'));
+        if (kind === 'deb') return assets.find(a => /\.deb$/i.test(a.name));
         return null;
     }
 
@@ -132,7 +189,8 @@ function createUpdater({ repo, branch = 'main', appDir }) {
                 notes: release.body || '',
                 url: release.html_url,
                 prerelease: Boolean(release.prerelease),
-                canAutoInstall: Boolean(process.env.APPIMAGE && asset),
+                installKind: installKind(),
+                canAutoInstall: Boolean(asset && ['appimage', 'rpm', 'deb'].includes(installKind())),
                 hasUpdate: Boolean(latestVersion) && compareVersions(latestVersion, currentVersion) > 0
             };
         } catch (err) {
@@ -140,7 +198,7 @@ function createUpdater({ repo, branch = 'main', appDir }) {
         }
     }
 
-    async function apply() {
+    async function apply({ onProgress } = {}) {
         try {
             if (isGitClone) {
                 const before = await run('git', ['rev-parse', 'HEAD'], appDir);
@@ -156,12 +214,20 @@ function createUpdater({ repo, branch = 'main', appDir }) {
             const release = lastRelease || await fetchNewestRelease(repo, userAgent);
             if (!release) return { ok: false, error: 'Brak opublikowanych wersji na GitHubie' };
             const asset = pickAsset(release);
-            if (process.env.APPIMAGE && asset) {
+            const kind = installKind();
+            if (kind === 'appimage' && asset) {
                 const target = process.env.APPIMAGE;
                 const tmp = `${target}.download`;
-                await download(asset.browser_download_url, tmp, userAgent);
+                await download(asset.browser_download_url, tmp, userAgent, onProgress);
                 fs.chmodSync(tmp, 0o755);
                 fs.renameSync(tmp, target);
+                return { ok: true, restart: true };
+            }
+            if ((kind === 'rpm' || kind === 'deb') && asset) {
+                const file = path.join(os.tmpdir(), asset.name);
+                await download(asset.browser_download_url, file, userAgent, onProgress);
+                if (onProgress) onProgress({ stage: 'install' });
+                try { await installPackage(kind, file); } finally { fs.rmSync(file, { force: true }); }
                 return { ok: true, restart: true };
             }
             await shell.openExternal(release.html_url);
@@ -177,7 +243,7 @@ function createUpdater({ repo, branch = 'main', appDir }) {
         app.exit(0);
     }
 
-    return { check, apply, restart, repoUrl: `https://github.com/${repo}` };
+    return { check, apply, restart, installKind, repoUrl: `https://github.com/${repo}` };
 }
 
 module.exports = { createUpdater, compareVersions };
