@@ -45,6 +45,9 @@
     .url-item .kind { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--m-item); color: var(--m-text-3); white-space: nowrap; }
     .url-item.usb .kind { background: rgba(76, 195, 138, 0.15); color: var(--m-leaf); }
     .url-item .url { flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--m-accent); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .vcam-toggle { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--m-text-2); cursor: pointer; }
+    .vcam-toggle input { margin-top: 3px; accent-color: var(--m-accent); width: 16px; height: 16px; }
+    .vcam-toggle small { color: var(--m-text-3); }
     .android-options { display: none; flex-direction: column; gap: 8px; }
     .android-options.show { display: flex; }
     .android-options .m-btn.small { align-self: flex-start; }
@@ -168,6 +171,21 @@
 
       <!-- ZAKŁADKA: OPCJE -->
       <div class="m-view" id="viewOptions">
+        <div class="m-panel">
+          <div class="m-panel-header">
+            <span class="m-panel-title">Wirtualna kamera</span>
+            <div class="m-status"><span id="vcamDot" class="m-status-dot"></span><span id="vcamText">Sprawdzanie…</span></div>
+          </div>
+          <div class="m-panel-body">
+            <div class="m-small" id="vcamInfo"></div>
+            <button id="vcamFix" class="m-btn small" style="display:none; align-self:flex-start;">Ustaw nazwę „Pitaya Cam”</button>
+            <label class="vcam-toggle">
+              <input type="checkbox" id="vcamIdle">
+              <span><b>Plansza „aplikacja nieaktywna”</b><br><small>Gdy Pitaya Cam nie nadaje, Discord i OBS widzą logo z napisem zamiast znikającej kamery.</small></span>
+            </label>
+          </div>
+        </div>
+
         <div class="m-panel">
           <div class="m-panel-header">
             <span class="m-panel-title">Serwer dla iPhone'a</span>
@@ -528,6 +546,38 @@
       streamBtn.classList.toggle('accent', !running);
       streamBtn.disabled = disabled;
     }
+
+    // ───── Wirtualna kamera: nazwa w systemie i plansza ─────
+    const vcamFix = document.getElementById('vcamFix');
+    const vcamIdle = document.getElementById('vcamIdle');
+    async function refreshVcam() {
+      const v = await ipcRenderer.invoke('vcam-status');
+      const ok = v.exists && !v.needsFix;
+      document.getElementById('vcamDot').classList.toggle('active', ok);
+      document.getElementById('vcamText').textContent = !v.exists ? 'Brak urządzenia' : `„${v.name}”`;
+      document.getElementById('vcamInfo').innerHTML = !v.exists
+        ? 'Nie ma wirtualnej kamery /dev/video10 — kliknij poniżej, żeby ją utworzyć (system poprosi o hasło).'
+        : v.needsFix
+          ? `W innych programach kamera nazywa się „${v.name}”${v.others.length ? ` (plus niepotrzebna „${v.others.map((o) => o.name).join('”, „')}”)` : ''}. Kliknij, żeby była jedna „Pitaya Cam” — system poprosi o hasło.`
+          : 'W Discordzie, OBS i przeglądarkach wybierz kamerę „Pitaya Cam”.';
+      vcamFix.style.display = v.needsFix ? '' : 'none';
+      vcamIdle.checked = v.idleEnabled;
+    }
+    vcamFix.addEventListener('click', async () => {
+      vcamFix.disabled = true;
+      vcamFix.textContent = 'Podaj hasło w oknie systemowym…';
+      const r = await ipcRenderer.invoke('vcam-fix');
+      vcamFix.disabled = false;
+      vcamFix.textContent = 'Ustaw nazwę „Pitaya Cam”';
+      if (r.ok) PitayaUI.showToast(r.message || 'Gotowe — kamera nazywa się teraz „Pitaya Cam”.', r.reboot ? 'info' : 'success');
+      else PitayaUI.showToast(r.error, 'error');
+      refreshVcam();
+    });
+    vcamIdle.addEventListener('change', async () => {
+      await ipcRenderer.invoke('vcam-idle', vcamIdle.checked);
+      PitayaUI.showToast(vcamIdle.checked ? 'Plansza włączona.' : 'Plansza wyłączona — bez nadawania kamera zniknie z listy.', 'info');
+    });
+    refreshVcam();
 
     // ───── Android ─────
     const androidOptions = document.getElementById('androidOptions');

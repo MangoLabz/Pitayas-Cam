@@ -23,13 +23,13 @@ rm -f /etc/udev/rules.d/99-mangocam-usb.rules /etc/modules-load.d/mangocam.conf 
 echo 'ACTION=="add", SUBSYSTEM=="usb", ATTR{power/control}="on"' > /etc/udev/rules.d/99-pitayacam-usb.rules
 udevadm control --reload-rules && udevadm trigger || true
 
-# 4. Moduł v4l2loopback (2 urządzenia, stałe numery, flagi dla Discorda)
+# 4. Moduł v4l2loopback (jedna kamera „Pitaya Cam” na /dev/video10, flaga dla Discorda)
 mkdir -p /etc/modules-load.d /etc/modprobe.d
 echo "v4l2loopback" > /etc/modules-load.d/pitayacam.conf
-echo 'options v4l2loopback devices=2 video_nr=10,12 card_label="Pitaya Cam,Pitaya Feed" exclusive_caps=1,1 max_width=3840 max_height=2160' > /etc/modprobe.d/pitayacam.conf
+echo 'options v4l2loopback devices=1 video_nr=10 card_label="Pitaya Cam" exclusive_caps=1 max_width=3840 max_height=2160' > /etc/modprobe.d/pitayacam.conf
 
 modprobe -r v4l2loopback 2>/dev/null || true
-modprobe v4l2loopback devices=2 video_nr=10,12 card_label="Pitaya Cam,Pitaya Feed" exclusive_caps=1,1 max_width=3840 max_height=2160 || true
+modprobe v4l2loopback devices=1 video_nr=10 card_label="Pitaya Cam" exclusive_caps=1 max_width=3840 max_height=2160 || true
 
 # 5. Uprawnienia wideo dla użytkownika
 TARGET_USER="${SUDO_USER:-$USER}"

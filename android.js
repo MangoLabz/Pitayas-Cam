@@ -2,7 +2,10 @@
 // Kamera telefonu z Androidem 12+ trafia przez scrcpy prosto do wirtualnej kamery (v4l2loopback).
 // Kablem USB albo bez kabla (ADB przez Wi‑Fi). Na telefonie nic nie instalujesz —
 // wystarczą włączone „Opcje programisty → Debugowanie USB”.
+const fs = require('fs');
 const { spawn, execFile } = require('child_process');
+
+const HAS_STDBUF = ['/usr/bin/stdbuf', '/bin/stdbuf'].some((p) => fs.existsSync(p));
 
 function run(cmd, args, timeout = 15000) {
     return new Promise((resolve) => {
@@ -54,7 +57,7 @@ function explain(text) {
     if (/(requires|require) (Android 12|API 31)|Camera.*not supported|camera mirroring is not supported/i.test(text)) return 'Kamera przez ADB wymaga Androida 12 lub nowszego.';
     if (/No matching camera size|camera-ar/i.test(text)) return 'Aparat nie ma trybu 16:9 — spróbuj innej jakości.';
     if (/Camera .* (in use|disconnected)|CAMERA_IN_USE|camera is used/i.test(text)) return 'Aparat telefonu jest zajęty przez inną aplikację — zamknij ją na telefonie.';
-    if (/(could not|failed to) open .*\/dev\/video|v4l2/i.test(text)) return 'Wirtualna kamera /dev/video10 jest niedostępna — uruchom instalator Pitaya Cam (moduł v4l2loopback).';
+    if (/(could not|failed to|cannot) open[^\n]*\/dev\/video|v4l2[^\n]*(error|failed|could not)/i.test(text)) return 'Wirtualna kamera /dev/video10 jest niedostępna — uruchom instalator Pitaya Cam (moduł v4l2loopback).';
     if (/device .*not found|no devices|offline/i.test(text)) return 'Telefon został odłączony albo jest niedostępny.';
     const line = text.split('\n').reverse().find((l) => /ERROR/.test(l));
     return line ? line.replace(/^.*ERROR:\s*/, '') : null;
@@ -84,10 +87,13 @@ function start({ serial, cameraId, facing = 'back', quality = '1080', sink, onSt
         ];
         output = '';
         let running = false;
-        proc = spawn('scrcpy', args, { env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' } });
+        // Bez terminala scrcpy buforuje komunikaty i „v4l2 sink started” przychodzi dopiero przy
+        // wyjściu — stdbuf wymusza wypisywanie linia po linii, więc start widać od razu
+        const env = { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' };
+        proc = HAS_STDBUF ? spawn('stdbuf', ['-oL', '-eL', 'scrcpy', ...args], { env }) : spawn('scrcpy', args, { env });
         const onData = (d) => {
             output = (output + d.toString()).slice(-6000);
-            if (!running && /v4l2 sink started|Device: .*\n.*(camera|Camera)|Texture:|INFO: Renderer/i.test(output) && /v4l2 sink started/i.test(output)) {
+            if (!running && /v4l2 sink started/i.test(output)) {
                 running = true;
                 onState({ state: 'running' });
             }

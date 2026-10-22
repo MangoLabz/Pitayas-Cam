@@ -31,9 +31,9 @@ zenity --question --title="Instalator Pitaya Cam" --width=380 \
 
   echo "50"; echo "# 3/5: Ładowanie modułu wirtualnej kamery (v4l2loopback)..."
   echo "v4l2loopback" | sudo tee /etc/modules-load.d/pitayacam.conf >/dev/null
-  echo 'options v4l2loopback devices=4 card_label="Pitaya Cam,Pitaya Screen,Pitaya Feed 1,Pitaya Feed 2" exclusive_caps=1,0,0,0 max_width=3840 max_height=2160' | sudo tee /etc/modprobe.d/pitayacam.conf >/dev/null
+  echo 'options v4l2loopback devices=1 video_nr=10 card_label="Pitaya Cam" exclusive_caps=1 max_width=3840 max_height=2160' | sudo tee /etc/modprobe.d/pitayacam.conf >/dev/null
   sudo modprobe -r v4l2loopback >/dev/null 2>&1
-  sudo modprobe v4l2loopback devices=4 card_label="Pitaya Cam,Pitaya Screen,Pitaya Feed 1,Pitaya Feed 2" exclusive_caps=1,0,0,0 max_width=3840 max_height=2160 >/dev/null 2>&1
+  sudo modprobe v4l2loopback devices=1 video_nr=10 card_label="Pitaya Cam" exclusive_caps=1 max_width=3840 max_height=2160 >/dev/null 2>&1
 
   echo "70"; echo "# 4/5: Generowanie certyfikatu SSL dla transmisji iPhone (HTTPS)..."
   APP_DIR=$(pwd)

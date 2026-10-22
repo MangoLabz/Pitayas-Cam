@@ -34,8 +34,8 @@ let wss = null;
 let httpServer = null;
 let localServer = null;
 
-const MASTER_DEV = "/dev/video10";
-const FEED_DEV = "/dev/video12";
+const virtualcam = require('./virtualcam');
+const MASTER_DEV = virtualcam.DEVICE;
 
 const cfg = core.settings.all();
 // Port zablokowany przez Safari/Chromium (np. 6666) zamieniamy na bezpieczny i zapisujemy
@@ -101,17 +101,19 @@ function startHttpServer() {
             if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('iphone-frame', Buffer.from(data));
         });
 
-            ws.on('close', () => {
-                stopStreaming();
-                if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('iphone-connected', false);
-            });
+        ws.on('close', () => {
+            stopStreaming();
+            virtualcam.idle.start();   // wraca plansza „aplikacja nieaktywna”
+            if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('iphone-connected', false);
+        });
     });
 
     httpServer.listen(PORT, '0.0.0.0');
 }
 
-function startFfmpegPipeFromWeb() {
+async function startFfmpegPipeFromWeb() {
     stopStreaming();
+    await virtualcam.idle.stop();   // zwalniamy wirtualną kamerę zajętą przez planszę
     const ffmpegArgs = [
         '-hide_banner', '-loglevel', 'error',
         '-f', 'image2pipe',
@@ -172,6 +174,7 @@ ipcMain.handle('android-start', async (event, { serial, mode, cameraId, quality 
     await stopAndroid();
     core.log.info(`Android ${serial}: start (${mode}${cameraId ? `, aparat ${cameraId}` : ''}, ${quality || '1080'}p)`);
     if (mode === 'scrcpy') {
+        await virtualcam.idle.stop();
         const session = { serial, mode };
         session.handle = android.start({
             serial, cameraId, quality, sink: MASTER_DEV,
@@ -187,6 +190,7 @@ ipcMain.handle('android-start', async (event, { serial, mode, cameraId, quality 
                     }
                 }
                 if (androidSession === session && (st.state === 'error' || st.state === 'stopped')) androidSession = null;
+                if (st.state === 'error' || st.state === 'stopped') virtualcam.idle.start();
                 sendWin('android-state', st);
             },
         });
@@ -334,6 +338,7 @@ ipcMain.handle('stop-stream', async () => {
     await stopAndroid();
     // Rozłączamy telefony nadające przez stronę (iPhone / Android w przeglądarce)
     if (wss) wss.clients.forEach((c) => { try { c.close(); } catch {} });
+    virtualcam.idle.start();
     return { status: 'stopped' };
 });
 
@@ -345,14 +350,50 @@ core.singleInstance(() => {
     mainWindow.focus();
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     createWindow();
     createTray();
     startHttpServer();
+    // Plansza „aplikacja nieaktywna” w wirtualnej kamerze, gdy nic nie nadaje
+    virtualcam.idle.enabled = core.settings.get('idleScreen', true);
+    if (await virtualcam.idle.install(core.paths.data, path.join(__dirname, 'assets', 'idle.png'))) {
+        if (virtualcam.idle.enabled) virtualcam.idle.start(); else virtualcam.idle.disable();
+    }
+    const vs = virtualcam.status();
+    if (vs.needsFix) core.log.warn(`Wirtualna kamera: ${vs.exists ? `nazwa „${vs.name}”` : 'brak urządzenia'}${vs.others.length ? `, dodatkowe: ${vs.others.map((o) => o.name).join(', ')}` : ''}`);
 });
 
-// Przy wyjściu zatrzymujemy scrcpy i zdejmujemy przekierowanie adb reverse
-app.on('before-quit', () => { stopAndroid(); });
+// ───── Wirtualna kamera: nazwa w systemie i plansza ─────
+ipcMain.handle('vcam-status', async () => ({
+    ...virtualcam.status(),
+    idleEnabled: virtualcam.idle.enabled,
+    idleActive: await virtualcam.idle.isActive(),
+}));
+ipcMain.handle('vcam-fix', async () => {
+    const r = await virtualcam.fix();
+    core.log.info('Naprawa wirtualnej kamery:', JSON.stringify(r));
+    return r;
+});
+ipcMain.handle('vcam-idle', async (event, enabled) => {
+    core.settings.set('idleScreen', Boolean(enabled));
+    virtualcam.idle.enabled = Boolean(enabled);
+    if (enabled) {
+        const busy = Boolean(ffmpegMasterProc || androidSession);
+        await virtualcam.idle.install(core.paths.data, path.join(__dirname, 'assets', 'idle.png'));
+        if (!busy) await virtualcam.idle.start();
+    } else {
+        await virtualcam.idle.disable();
+    }
+    return { ok: true };
+});
+
+// Przy wyjściu zatrzymujemy scrcpy, zdejmujemy adb reverse i oddajemy kamerę planszy
+app.on('before-quit', () => {
+    stopAndroid();
+    if (virtualcam.idle.enabled) {
+        try { require('child_process').execFileSync('systemctl', ['--user', 'start', 'pitaya-cam-idle.service'], { timeout: 5000 }); } catch {}
+    }
+});
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();
