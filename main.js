@@ -7,6 +7,7 @@ const fs = require('fs');
 const { spawn, exec } = require('child_process');
 const WebSocket = require('ws');
 const iphone = require('./iphone');
+const android = require('./android');
 // Pitaya Core: dane w ~/.config/Pitayas/Cam, ustawienia, logi, aktualizacje.
 // Ustawienia z czasów Mango (~/.config/mangocam) i pierwszych wersji Pitaya przenosimy przy pierwszym starcie.
 const core = require('./core').create({
@@ -27,11 +28,11 @@ const TRAY_ICON_PATH = path.join(__dirname, 'build', 'icons', '32x32.png');
 
 let mainWindow = null;
 let tray = null;
-let scrcpyProc = null;
 let ffmpegMasterProc = null;
 let isQuitting = false;
 let wss = null;
 let httpServer = null;
+let localServer = null;
 
 const MASTER_DEV = "/dev/video10";
 const FEED_DEV = "/dev/video12";
@@ -39,6 +40,8 @@ const FEED_DEV = "/dev/video12";
 const cfg = core.settings.all();
 // Port zablokowany przez Safari/Chromium (np. 6666) zamieniamy na bezpieczny i zapisujemy
 const PORT = iphone.safePort(cfg.port);
+// Drugi port (tylko 127.0.0.1) dla telefonów z Androidem podłączonych kablem przez adb reverse
+const LOCAL_PORT = iphone.safePort(PORT + 1) === PORT + 1 ? PORT + 1 : PORT - 1;
 if (PORT !== parseInt(cfg.port, 10)) {
     core.settings.set('port', PORT);
     core.log.warn(`Port ${cfg.port} jest blokowany przez przeglądarki — zmieniono na ${PORT}`);
@@ -63,7 +66,7 @@ function startHttpServer() {
         core.log.error('Nie udało się utworzyć certyfikatu HTTPS:', err);
         return;
     }
-    httpServer = https.createServer(tls, (req, res) => {
+    const servePage = (req, res) => {
         if (req.url === '/' || req.url.startsWith('/?')) {
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
             res.end(page);
@@ -71,10 +74,21 @@ function startHttpServer() {
             res.writeHead(404);
             res.end();
         }
-    });
+    };
+    httpServer = https.createServer(tls, servePage);
     httpServer.on('error', (err) => core.log.error(`Serwer iPhone (port ${PORT}):`, err.message));
 
-    wss = new WebSocket.Server({ server: httpServer });
+    // Android po kablu (adb reverse): telefon otwiera http://localhost:LOCAL_PORT — localhost
+    // jest dla przeglądarki bezpiecznym adresem, więc kamera działa bez certyfikatu i ostrzeżeń.
+    // Słuchamy tylko na 127.0.0.1, więc z sieci ten port jest niewidoczny.
+    localServer = http.createServer(servePage);
+    localServer.on('error', (err) => core.log.error(`Serwer lokalny (port ${LOCAL_PORT}):`, err.message));
+    localServer.listen(LOCAL_PORT, '127.0.0.1');
+
+    wss = new WebSocket.Server({ noServer: true });
+    for (const srv of [httpServer, localServer]) {
+        srv.on('upgrade', (req, socket, head) => wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req)));
+    }
 
     wss.on('connection', (ws) => {
         if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('iphone-connected', true);
@@ -110,7 +124,8 @@ function startFfmpegPipeFromWeb() {
         MASTER_DEV
     ];
     ffmpegMasterProc = spawn('ffmpeg', ffmpegArgs);
-    ffmpegMasterProc.on('error', () => {});
+    ffmpegMasterProc.on('error', (err) => core.log.error('ffmpeg (obraz z telefonu):', err.message));
+    ffmpegMasterProc.stdin.on('error', () => {});   // ffmpeg mógł się zakończyć — nie wywracamy aplikacji
 }
 
 function stopStreaming() {
@@ -121,92 +136,75 @@ function stopStreaming() {
         } catch (e) {}
         ffmpegMasterProc = null;
     }
-    if (scrcpyProc) {
-        try { scrcpyProc.kill(); } catch (e) {}
-        scrcpyProc = null;
-    }
 }
 
-ipcMain.handle('get-adb-devices', async () => {
-    return new Promise((resolve) => {
-        exec('adb devices -l', (err, stdout) => {
-            if (err || !stdout) return resolve([]);
-            const lines = stdout.trim().split('\n').slice(1);
-            const devices = [];
-            for (const line of lines) {
-                const parts = line.trim().split(/\s+/);
-                if (parts.length >= 2 && parts[1] === 'device') {
-                    const serial = parts[0];
-                    let model = 'Android';
-                    for (const p of parts) {
-                        if (p.startsWith('model:')) model = p.split(':')[1].replace(/_/g, ' ');
-                    }
-                    devices.push({
-                        serial: serial,
-                        label: `🤖 ${model} (${serial})`
-                    });
-                }
-            }
-            resolve(devices);
-        });
-    });
-});
+// ═══════ ANDROID PRZEZ ADB ═══════
+// Android 12+: scrcpy bierze obraz z aparatu prosto do wirtualnej kamery.
+// Starsze: tryb przeglądarki — adb reverse + strona http://localhost na telefonie (po kablu).
+let androidSession = null;   // { serial, mode: 'scrcpy' | 'browser', handle }
 
-ipcMain.handle('start-android-stream', async (event, config) => {
-    stopStreaming();
-    const { serial, resolution, facing } = config;
-    const res = resolution || "1920x1080";
-    const camFacing = facing === 'rear' ? 'back' : 'front';
+function sendWin(channel, data) {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, data);
+}
 
-    exec(`adb -s ${serial} shell input keyevent KEYCODE_WAKEUP`);
+async function stopAndroid() {
+    const s = androidSession;
+    androidSession = null;
+    if (!s) return;
+    if (s.handle) s.handle.stop();
+    if (s.mode === 'browser') await android.stopBrowser(s.serial, LOCAL_PORT);
+}
 
-    const scrcpyArgs = [
-        '--serial', serial,
-        '--video-source=camera',
-        '--video-codec=h264',
-        '--stay-awake',
-        `--camera-size=${res}`,
-        '--camera-fps=30',
-        '--video-bit-rate=8M',
-        `--camera-facing=${camFacing}`,
-        '--no-playback',
-        '--no-audio',
-        `--v4l2-sink=${FEED_DEV}`
-    ];
-
-    try {
-        scrcpyProc = spawn('scrcpy', scrcpyArgs, {
-            env: { ...process.env, SDL_VIDEODRIVER: 'dummy', SDL_AUDIODRIVER: 'dummy' }
-        });
-
-        scrcpyProc.on('error', (err) => {
-            stopStreaming();
-            dialog.showErrorBox('Brak scrcpy', 'Nie odnaleziono programu scrcpy w systemie.');
-        });
-
-        setTimeout(() => {
-            if (!scrcpyProc) return;
-            const ffmpegArgs = [
-                '-hide_banner', '-loglevel', 'error', '-nostdin',
-                '-thread_queue_size', '512',
-                '-f', 'v4l2', '-i', FEED_DEV,
-                '-vf', 'scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=0x0c0c0e,format=yuv420p',
-                   '-r', '30',
-                   '-f', 'v4l2',
-                   '-pix_fmt', 'yuv420p',
-                   MASTER_DEV
-            ];
-            ffmpegMasterProc = spawn('ffmpeg', ffmpegArgs);
-            ffmpegMasterProc.on('error', () => {});
-        }, 3000);
-
-        return { status: 'running' };
-    } catch (err) {
-        stopStreaming();
-        dialog.showErrorBox('Błąd uruchomienia', err.message);
-        return { status: 'error' };
+ipcMain.handle('android-devices', async () => {
+    const r = await android.listDevices();
+    for (const d of r.devices) {
+        if (d.state !== 'device') continue;
+        Object.assign(d, await android.androidVersion(d.serial));
+        d.mode = d.sdk >= 31 ? 'scrcpy' : 'browser';
     }
+    return r;
 });
+
+ipcMain.handle('android-cameras', (event, serial) => android.listCameras(serial));
+
+ipcMain.handle('android-start', async (event, { serial, mode, cameraId, quality }) => {
+    stopStreaming();
+    await stopAndroid();
+    core.log.info(`Android ${serial}: start (${mode}${cameraId ? `, aparat ${cameraId}` : ''}, ${quality || '1080'}p)`);
+    if (mode === 'scrcpy') {
+        const session = { serial, mode };
+        session.handle = android.start({
+            serial, cameraId, quality, sink: MASTER_DEV,
+            onState: async (st) => {
+                if (st.state === 'error') core.log.warn(`Android ${serial}:`, st.message);
+                // Telefon odmówił aparatu przez ADB (np. starszy system) — otwieramy stronę na telefonie
+                if (st.state === 'error' && androidSession === session && /Androida 12/.test(st.message || '')) {
+                    const r = await android.startBrowser(serial, LOCAL_PORT);
+                    if (r.ok) {
+                        androidSession = { serial, mode: 'browser' };
+                        sendWin('android-state', { state: 'browser', message: 'Na telefonie otworzyła się strona — dotknij „Uruchom kamerę”.' });
+                        return;
+                    }
+                }
+                if (androidSession === session && (st.state === 'error' || st.state === 'stopped')) androidSession = null;
+                sendWin('android-state', st);
+            },
+        });
+        androidSession = session;
+        return { ok: true };
+    }
+    const r = await android.startBrowser(serial, LOCAL_PORT);
+    if (r.ok) androidSession = { serial, mode };
+    else core.log.warn(`Android ${serial}:`, r.error);
+    return r;
+});
+
+ipcMain.handle('android-stop', async () => {
+    await stopAndroid();
+    return { ok: true };
+});
+
+ipcMain.handle('android-wifi', (event, serial) => android.enableWifi(serial));
 
 // Automatyczne sprawdzanie typu/motywu widżetu z 6klabs
 ipcMain.handle('detect-widget-style', async (event, url) => {
@@ -333,6 +331,9 @@ core.registerIpc({
 });
 ipcMain.handle('stop-stream', async () => {
     stopStreaming();
+    await stopAndroid();
+    // Rozłączamy telefony nadające przez stronę (iPhone / Android w przeglądarce)
+    if (wss) wss.clients.forEach((c) => { try { c.close(); } catch {} });
     return { status: 'stopped' };
 });
 
@@ -349,6 +350,9 @@ app.whenReady().then(() => {
     createTray();
     startHttpServer();
 });
+
+// Przy wyjściu zatrzymujemy scrcpy i zdejmujemy przekierowanie adb reverse
+app.on('before-quit', () => { stopAndroid(); });
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') app.quit();

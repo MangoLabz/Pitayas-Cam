@@ -45,6 +45,9 @@
     .url-item .kind { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--m-item); color: var(--m-text-3); white-space: nowrap; }
     .url-item.usb .kind { background: rgba(76, 195, 138, 0.15); color: var(--m-leaf); }
     .url-item .url { flex: 1; min-width: 0; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; color: var(--m-accent); font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .android-options { display: none; flex-direction: column; gap: 8px; }
+    .android-options.show { display: flex; }
+    .android-options .m-btn.small { align-self: flex-start; }
     .steps { margin: 0 0 0 18px; display: none; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--m-text-2); line-height: 1.45; }
     .steps.show { display: flex; }
     .url-box .url { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--m-accent); font-weight: 700; word-break: break-all; user-select: text; }
@@ -133,6 +136,17 @@
             <div class="m-row">
               <select id="deviceList" class="m-select"></select>
               <button id="refreshDevices" class="m-btn icon-only" title="Odśwież urządzenia"><svg class="ico"><use href="#i-refresh"/></svg></button>
+            </div>
+            <div id="androidOptions" class="android-options">
+              <div class="m-row">
+                <select id="androidCamera" class="m-select" title="Aparat telefonu"></select>
+                <select id="androidQuality" class="m-select" title="Jakość">
+                  <option value="1080">1080p</option>
+                  <option value="720">720p</option>
+                </select>
+              </div>
+              <div class="android-hint m-small" id="androidHint"></div>
+              <button id="androidWifi" class="m-btn small" title="Przełącz telefon na ADB przez Wi‑Fi">Bez kabla (Wi‑Fi)</button>
             </div>
             <button id="streamActionBtn" class="m-btn accent block">Uruchom kamerę</button>
           </div>
@@ -459,12 +473,22 @@
         found = true;
       }
 
-      const adbDevs = await ipcRenderer.invoke('get-adb-devices');
-      adbDevs.forEach(d => {
+      const adb = await ipcRenderer.invoke('android-devices');
+      adb.devices.forEach(d => {
         const opt = document.createElement('option');
         opt.value = d.serial;
         opt.dataset.type = 'android';
-        opt.textContent = d.label;
+        if (d.state === 'device') {
+          opt.dataset.mode = d.mode;
+          opt.dataset.transport = d.transport;
+          opt.dataset.release = d.release;
+          opt.textContent = `🤖 ${d.model} · Android ${d.release}${d.transport === 'wifi' ? ' · Wi‑Fi' : ''}`;
+        } else {
+          opt.disabled = true;
+          opt.textContent = d.state === 'unauthorized'
+            ? `🤖 Telefon — zatwierdź „debugowanie USB” na telefonie`
+            : `🤖 Telefon (${d.state}) — podłącz ponownie`;
+        }
         deviceSelect.appendChild(opt);
         found = true;
       });
@@ -488,6 +512,11 @@
       } else if (prev) {
         deviceSelect.value = prev;
       }
+      if (!deviceSelect.value || deviceSelect.selectedOptions[0]?.disabled) {
+        const firstOk = [...deviceSelect.options].find((o) => !o.disabled);
+        if (firstOk) deviceSelect.value = firstOk.value;
+      }
+      updateAndroidOptions();
     }
 
     document.getElementById('refreshDevices').addEventListener('click', scanDevices);
@@ -500,6 +529,101 @@
       streamBtn.disabled = disabled;
     }
 
+    // ───── Android ─────
+    const androidOptions = document.getElementById('androidOptions');
+    const androidCamera = document.getElementById('androidCamera');
+    const androidQuality = document.getElementById('androidQuality');
+    const androidHint = document.getElementById('androidHint');
+    const androidWifi = document.getElementById('androidWifi');
+    let camerasFor = null;
+
+    async function updateAndroidOptions() {
+      const opt = deviceSelect.selectedOptions[0];
+      const isAndroid = Boolean(opt && opt.dataset.type === 'android' && !opt.disabled);
+      androidOptions.classList.toggle('show', isAndroid);
+      if (!isAndroid) return;
+      const scrcpy = opt.dataset.mode === 'scrcpy';
+      androidCamera.style.display = scrcpy ? '' : 'none';
+      androidQuality.style.display = scrcpy ? '' : 'none';
+      androidWifi.style.display = opt.dataset.transport === 'usb' ? '' : 'none';
+      androidHint.innerHTML = scrcpy
+        ? 'Obraz prosto z aparatu (Android 12+) — na telefonie nic nie trzeba klikać.'
+        : `Android ${opt.dataset.release} nie pozwala przechwycić aparatu bezpośrednio (wymaga 12+). Pitaya Cam otworzy stronę na telefonie — dotknij tam <b>„Uruchom kamerę”</b> i zezwól na dostęp. Obraz pójdzie po kablu.`;
+      if (scrcpy && camerasFor !== opt.value) {
+        camerasFor = opt.value;
+        androidCamera.innerHTML = '<option value="">Wczytywanie aparatów…</option>';
+        const r = await ipcRenderer.invoke('android-cameras', opt.value);
+        const names = { back: 'Tylny', front: 'Przedni', external: 'Zewnętrzny' };
+        androidCamera.innerHTML = r.ok
+          ? r.cameras.map((c) => `<option value="${c.id}">${names[c.facing] || c.facing} ${c.width ? `· ${(c.width * c.height / 1e6).toFixed(0)} MP` : ''} (#${c.id})</option>`).join('')
+          : '<option value="">Domyślny aparat</option>';
+        if (!r.ok) PitayaUI.showToast(r.error, 'error');
+      }
+    }
+    deviceSelect.addEventListener('change', updateAndroidOptions);
+
+    androidWifi.addEventListener('click', async () => {
+      const opt = deviceSelect.selectedOptions[0];
+      androidWifi.disabled = true;
+      androidWifi.textContent = 'Przełączanie…';
+      const r = await ipcRenderer.invoke('android-wifi', opt.value);
+      androidWifi.disabled = false;
+      androidWifi.textContent = 'Bez kabla (Wi‑Fi)';
+      if (r.ok) {
+        PitayaUI.showToast(`Połączono przez Wi‑Fi (${r.ip}) — możesz odłączyć kabel.`, 'success');
+        await scanDevices();
+        deviceSelect.value = r.serial;
+        updateAndroidOptions();
+      } else {
+        PitayaUI.showToast(r.error, 'error');
+      }
+    });
+
+    async function showVirtualCamPreview() {
+      try {
+        const allDevs = await navigator.mediaDevices.enumerateDevices();
+        const camDev = allDevs.find(d => d.kind === 'videoinput' && /pitaya cam|mango cam|loopback/i.test(d.label));
+        if (!camDev) throw new Error('brak');
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: camDev.deviceId } } });
+        video.srcObject = stream;
+        video.style.display = 'block';
+        previewImg.style.display = 'none';
+        fallback.style.display = 'none';
+        localStream = stream;
+      } catch (e) {
+        video.style.display = 'none';
+        fallback.style.display = 'flex';
+        fallback.textContent = '🟢 Obraz z telefonu trafia do wirtualnej kamery';
+      }
+    }
+
+    ipcRenderer.on('android-state', async (event, st) => {
+      if (st.state === 'browser') {
+        // Przejście na stronę — obraz przyjdzie przez nią (zdarzenie iphone-connected)
+        PitayaUI.showToast(st.message, 'info');
+        statusText.textContent = 'Na telefonie dotknij „Uruchom kamerę”';
+        setStreamButton('Anuluj', true);
+        return;
+      }
+      if (st.state === 'running') {
+        await showVirtualCamPreview();
+        isStreaming = true;
+        statusDot.classList.add('active');
+        statusText.textContent = 'Android aktywny';
+        setStreamButton('Zatrzymaj kamerę', true);
+      } else if (st.state === 'error' || st.state === 'stopped') {
+        if (st.state === 'error') { PitayaUI.showToast(st.message, 'error'); statusText.textContent = 'Błąd: ' + st.message; }
+        else statusText.textContent = 'Zatrzymano';
+        statusDot.classList.remove('active');
+        if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; video.srcObject = null; }
+        video.style.display = 'none';
+        fallback.style.display = 'flex';
+        fallback.innerHTML = FALLBACK_HTML;
+        isStreaming = false;
+        setStreamButton('Uruchom kamerę', false);
+      }
+    });
+
     ipcRenderer.on('iphone-connected', (event, connected) => {
       iphoneOnline = connected;
       scanDevices();
@@ -510,9 +634,9 @@
         previewImg.style.display = 'block';
         fallback.style.display = 'none';
         statusDot.classList.add('active');
-        statusText.textContent = 'iPhone połączony';
+        statusText.textContent = 'Telefon połączony';
         isStreaming = true;
-        setStreamButton('iPhone nadaje na żywo', true, true);
+        setStreamButton('Zatrzymaj (telefon nadaje)', true);
       } else {
         previewImg.style.display = 'none';
         fallback.style.display = 'flex';
@@ -541,45 +665,26 @@
         streamBtn.disabled = true;
 
         if (opt.dataset.type === 'android') {
-          await ipcRenderer.invoke('start-android-stream', {
+          const mode = opt.dataset.mode;
+          const res = await ipcRenderer.invoke('android-start', {
             serial: opt.value,
-            resolution: '1920x1080',
-            facing: 'front'
+            mode,
+            cameraId: mode === 'scrcpy' ? (androidCamera.value || null) : null,
+            quality: androidQuality.value,
           });
-
-          setTimeout(async () => {
-            try {
-              const allDevs = await navigator.mediaDevices.enumerateDevices();
-              const camDev = allDevs.find(d =>
-                d.kind === 'videoinput' &&
-                (d.label.toLowerCase().includes('pitaya cam') || d.label.toLowerCase().includes('mango cam') || d.label.toLowerCase().includes('loopback'))
-              );
-
-              if (camDev) {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                  video: { deviceId: { exact: camDev.deviceId } }
-                });
-                video.srcObject = stream;
-                video.style.display = 'block';
-                previewImg.style.display = 'none';
-                fallback.style.display = 'none';
-                localStream = stream;
-              } else {
-                video.style.display = 'none';
-                previewImg.style.display = 'none';
-                fallback.style.display = 'flex';
-                fallback.textContent = '🟢 Sygnał z telefonu jest aktywny';
-              }
-            } catch (e) {
-              fallback.style.display = 'flex';
-              fallback.textContent = '🟢 Sygnał z telefonu jest aktywny';
-            }
-
+          if (!res.ok) {
+            PitayaUI.showToast(res.error, 'error');
+            statusText.textContent = 'Błąd: ' + res.error;
+            setStreamButton('Uruchom kamerę', false);
+          } else if (mode === 'browser') {
+            // Obraz przyjdzie przez stronę na telefonie (zdarzenie iphone-connected)
+            statusText.textContent = 'Na telefonie dotknij „Uruchom kamerę”';
             isStreaming = true;
-            statusDot.classList.add('active');
-            statusText.textContent = 'Android aktywny';
-            setStreamButton('Zatrzymaj kamerę', true);
-          }, 4000);
+            setStreamButton('Anuluj', true);
+          } else {
+            statusText.textContent = 'Uruchamianie aparatu telefonu…';
+            streamBtn.textContent = 'Uruchamianie…';
+          }
 
         } else if (opt.dataset.type === 'browser_cam') {
           try {
