@@ -1,6 +1,6 @@
 {
   "name": "pitaya-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Pitaya Core — wspólny rdzeń aplikacji Pitayas: folder danych, ustawienia, logi, rejestr aplikacji, sterowanie, aktualizacje i wygląd",
   "main": "index.js",
   "private": true,

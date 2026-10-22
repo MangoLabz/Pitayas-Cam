@@ -9,7 +9,7 @@ const https = require('https');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFile, execFileSync } = require('child_process');
+const { execFile, execFileSync, spawn } = require('child_process');
 
 function run(cmd, args, cwd, timeout = 60000) {
     return new Promise((resolve, reject) => {
@@ -112,7 +112,8 @@ function installKind() {
     if (cachedKind) return cachedKind;
     cachedKind = 'other';
     if (process.env.APPIMAGE) cachedKind = 'appimage';
-    else if (process.platform === 'win32') cachedKind = 'windows';
+    // Windows: wersja przenośna (electron-builder ustawia PORTABLE_EXECUTABLE_FILE) albo instalator NSIS
+    else if (process.platform === 'win32') cachedKind = process.env.PORTABLE_EXECUTABLE_FILE ? 'portable' : app.isPackaged ? 'nsis' : 'other';
     else if (process.platform === 'linux' && app.isPackaged) {
         const exe = process.execPath;
         const owns = (cmd, args) => { try { execFileSync(cmd, args, { stdio: 'ignore', timeout: 5000 }); return true; } catch { return false; } };
@@ -147,12 +148,14 @@ function createUpdater({ repo, branch = 'main', appDir }) {
     const userAgent = `${repo.split('/')[1]}-Updater`;
     const isGitClone = !app.isPackaged && fs.existsSync(path.join(appDir, '.git'));
     let lastRelease = null;
+    let pending = null;   // Windows: pobrana aktualizacja czekająca na zamknięcie aplikacji
 
     function pickAsset(release) {
         const assets = (release && release.assets) || [];
         const kind = installKind();
         if (kind === 'appimage') return assets.find(a => /\.AppImage$/i.test(a.name));
-        if (kind === 'windows') return assets.find(a => /\.exe$/i.test(a.name));
+        if (kind === 'nsis') return assets.find(a => /setup.*\.exe$/i.test(a.name)) || assets.find(a => /\.exe$/i.test(a.name) && !/portable/i.test(a.name));
+        if (kind === 'portable') return assets.find(a => /portable.*\.exe$/i.test(a.name));
         if (kind === 'rpm') return assets.find(a => /\.rpm$/i.test(a.name) && /x86_64|amd64|noarch/i.test(a.name) === (process.arch === 'x64'));
         if (kind === 'deb') return assets.find(a => /\.deb$/i.test(a.name));
         return null;
@@ -190,7 +193,7 @@ function createUpdater({ repo, branch = 'main', appDir }) {
                 url: release.html_url,
                 prerelease: Boolean(release.prerelease),
                 installKind: installKind(),
-                canAutoInstall: Boolean(asset && ['appimage', 'rpm', 'deb'].includes(installKind())),
+                canAutoInstall: Boolean(asset && ['appimage', 'rpm', 'deb', 'nsis', 'portable'].includes(installKind())),
                 hasUpdate: Boolean(latestVersion) && compareVersions(latestVersion, currentVersion) > 0
             };
         } catch (err) {
@@ -230,6 +233,21 @@ function createUpdater({ repo, branch = 'main', appDir }) {
                 try { await installPackage(kind, file); } finally { fs.rmSync(file, { force: true }); }
                 return { ok: true, restart: true };
             }
+            // Windows (instalator): pobieramy nowy Setup.exe, a po „Uruchom ponownie” instaluje się po cichu i sam uruchamia aplikację
+            if (kind === 'nsis' && asset) {
+                const file = path.join(os.tmpdir(), asset.name);
+                await download(asset.browser_download_url, file, userAgent, onProgress);
+                pending = { kind, file };
+                return { ok: true, restart: true };
+            }
+            // Windows (wersja przenośna): nowy plik obok starego, podmiana po zamknięciu aplikacji
+            if (kind === 'portable' && asset) {
+                const target = process.env.PORTABLE_EXECUTABLE_FILE;
+                const file = `${target}.new`;
+                await download(asset.browser_download_url, file, userAgent, onProgress);
+                pending = { kind, file, target };
+                return { ok: true, restart: true };
+            }
             await shell.openExternal(release.html_url);
             return { ok: true, openedBrowser: true };
         } catch (err) {
@@ -238,6 +256,19 @@ function createUpdater({ repo, branch = 'main', appDir }) {
     }
 
     function restart() {
+        if (pending && pending.kind === 'nsis') {
+            // /S = bez okien, --force-run = uruchom aplikację po instalacji (instalator sam zamyka starą wersję)
+            spawn(pending.file, ['/S', '--force-run'], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+            setTimeout(() => app.exit(0), 300);
+            return;
+        }
+        if (pending && pending.kind === 'portable') {
+            const q = (x) => `"${x.replace(/"/g, '')}"`;
+            const script = `ping -n 3 127.0.0.1 >nul & move /y ${q(pending.file)} ${q(pending.target)} >nul & start "" ${q(pending.target)}`;
+            spawn('cmd.exe', ['/d', '/c', script], { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true }).unref();
+            setTimeout(() => app.exit(0), 300);
+            return;
+        }
         // AppImage montuje się w /tmp — restartujemy sam plik AppImage, a nie binarkę z montowania
         app.relaunch(process.env.APPIMAGE ? { execPath: process.env.APPIMAGE } : undefined);
         app.exit(0);

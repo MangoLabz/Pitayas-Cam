@@ -25,7 +25,7 @@ const { createUpdater, compareVersions } = require('./updater');
 const registry = require('./registry');
 const control = require('./control');
 
-const CORE_VERSION = '0.2.0';
+const CORE_VERSION = '0.2.1';
 
 function readJson(file, fallback) {
     try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
